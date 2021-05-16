@@ -3,10 +3,11 @@ import numpy as np
 import operator
 import pandas as pd
 import sys
+import time
 
 from decimal import *
 from decimal_math import sin, cos
-from functools import cached_property, lru_cache
+from functools import cached_property, lru_cache, wraps
 from math import pi, sqrt, comb
 from matplotlib import pyplot as plt
 from tqdm.auto import tqdm, trange
@@ -18,6 +19,19 @@ PRECISION = 10
 END = (-1, 0)
 START = (1, 0)
 
+sys.setrecursionlimit(30000)
+
+def fn_timer(function):
+    @wraps(function)
+    def function_timer(*args, **kwargs):
+        t0 = time.time()
+        result = function(*args, **kwargs)
+        t1 = time.time()
+        print ("Total time running %s: %s seconds" %
+               (function.__name__, str(t1-t0))
+               )
+        return result
+    return function_timer
 
 def zeroise(a: float or None) -> bool:
     if a is None:
@@ -106,7 +120,7 @@ class Point:
             List[Point]: List of Point nodes at the n-th level of dependence
         """
         current = set([self])
-        for i in range(n):
+        for _ in range(n):
             current = set(edge.other_end(
                 point) for point in current for edge in point.dependent_edges(polygon_solver))
         return sorted(list(current), key=operator.attrgetter("x", "y"))
@@ -116,7 +130,7 @@ class Point:
             return not zeroise(self.x - other.x) and not zeroise(self.y - other.y)
         raise TypeError(f"Unable to compare Point and {other}.")
 
-    def __hash__(self):
+    def __hash__(self) -> int:
         return hash((self.x, self.y))
 
     def __repr__(self) -> str:
@@ -124,14 +138,17 @@ class Point:
 
 
 class LineSegment:
+
+    __slots__ = ["p1", "p2"]
+
     def __init__(self, p1: "Point", p2: "Point"):
         self.p1, self.p2 = sorted([p1, p2], key=operator.attrgetter("x", "y"))
 
-    @cached_property
+    @property
     def L2(self) -> float:
         return sqrt((self.p1.x - self.p2.x)**2 + (self.p1.y - self.p2.y)**2)
 
-    @cached_property
+    @property
     def mid(self) -> "Point":
         return Point((self.p1.x + self.p2.x)/2, (self.p1.y + self.p2.y)/2)
 
@@ -198,7 +215,7 @@ class LineSegment:
             return self.p1 == other.p1 and self.p2 == other.p2
         return False
 
-    def __hash__(self):
+    def __hash__(self) -> int:
         return hash((self.p1, self.p2))
 
     def __repr__(self) -> str:
@@ -255,7 +272,7 @@ class PolygonSolver:
         polygon = []
         previous = Point(*START)
 
-        for i in range(n):
+        for _ in range(n):
             polygon.append(previous)
             previous = self.find_next_coordinate(
                 (previous.x, previous.y), theta)
@@ -293,7 +310,9 @@ class PolygonSolver:
         line_segments = set()
         point_ls = dict()
 
-        for ls, p in self.line2points.items():
+        print("Creating line segments...")
+
+        for ls, p in tqdm(self.line2points.items()):
             if len(p) == 2:
                 line_segments.add(ls)
             else:
@@ -311,6 +330,7 @@ class PolygonSolver:
 
         self.line_segments = line_segments
         self.point_ls = point_ls
+        return None
 
     def plot_polygon_graph(self, figsize: int = 8, lines: bool = True, points: bool = True, values: bool = True,
                            point_size: float = 1, head_width: float = 0.03):
@@ -370,11 +390,9 @@ class PolygonSolver:
             raise AssertionError(
                 f"Theoretical number of points ({int(self.n)} + {int(interior)} = {int(self.n + interior)}) not equal to calculated number of points ({len(self.point_ls)}). Difference of {diff}.")
 
-    @lru_cache(maxsize=None)
     def solve(self) -> int:
         return sorted(self.point_ls.keys(), key=operator.attrgetter("x", "y"))[0].value(self)
 
-    @lru_cache(maxsize=None)
     def progressive_solve(self) -> int:
         """
         Intended as an alternative solver that allows us to progressively solve the graph.
@@ -382,15 +400,17 @@ class PolygonSolver:
         """
         iterable = sorted(self.point_ls.keys(),
                           key=operator.attrgetter("x", "y"), reverse=True)
+        print("Solving progressively...")
         for item in tqdm(iterable, total=len(iterable)):
             item.value(self)
         return iterable[-1].value(self)
 
+@fn_timer
+def main():
+    solver = PolygonSolver(n=60, plot=False, figsize=20,
+                        values=False, head_width=0.01, point_size=12)
+    solver.check_intersections()
+    final = solver.progressive_solve()
+    print(final)
 
-sys.setrecursionlimit(30000)
-
-solver = PolygonSolver(n=30, plot=False, figsize=20,
-                       values=False, head_width=0.01, point_size=12)
-solver.check_intersections()
-final = solver.progressive_solve()
-print(final)
+main()
