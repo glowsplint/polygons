@@ -4,52 +4,41 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"strings"
 
-	dec "github.com/shopspring/decimal"
+	_ "github.com/shopspring/decimal"
 )
 
 // Constants
-var ZERO dec.Decimal = dec.NewFromInt(0)
-var ONE dec.Decimal = dec.NewFromInt(1)
-var TWO dec.Decimal = dec.NewFromInt(2)
-
-var END Point = Point{ONE.Neg(), ZERO}
-var START Point = Point{ONE, ZERO}
+var END Point = Point{-1, 0}
+var START Point = Point{1, 0}
 
 // Point
 type Point struct {
-	x dec.Decimal
-	y dec.Decimal
-}
-
-func (p Point) ToString() string {
-	return strings.Join([]string{p.x.String(), p.y.String()}, ", ")
+	x float64
+	y float64
 }
 
 func FromIntersection(L1, L2 LineSegment) (Point, error) {
 	// Alternate constructor for Point via intersection of two LineSegments
 	// Returns a pointer to the Point instance
-	a1, b1, c1 := (L1.p2.x.Sub(L1.p1.x)), (L2.p1.x.Sub(L2.p2.x)), (L2.p1.x.Sub(L1.p1.x))
-	a2, b2, c2 := (L1.p2.y.Sub(L1.p1.y)), (L2.p1.y.Sub(L2.p2.y)), (L2.p1.y.Sub(L1.p1.y))
+	a1, b1, c1 := (L1.p2.x - L1.p1.x), (L2.p1.x - L2.p2.x), (L2.p1.x - L1.p1.x)
+	a2, b2, c2 := (L1.p2.y - L1.p1.y), (L2.p1.y - L2.p2.y), (L2.p1.y - L1.p1.y)
 
-	D := a1.Mul(b2).Sub(b1.Mul(a2))
-	Dx := c1.Mul(b2).Sub(b1.Mul(c2))
-	Dy := a1.Mul(c2).Sub(c1.Mul(a2))
+	D := a1*b2 - b1*a2
+	Dx := c1*b2 - b1*c2
+	Dy := a1*c2 - c1*a2
 
-	if !D.Equal(dec.NewFromInt(0)) {
-		s := Dx.Div(D)
-		t := Dy.Div(D)
+	if D != 0 {
+		s := Dx / D
+		t := Dy / D
 
-		if !(s.LessThanOrEqual(ZERO) && s.LessThanOrEqual(ONE) && t.LessThanOrEqual(ZERO) && t.LessThanOrEqual(ONE)) {
-			return Point{ZERO, ZERO}, errors.New("no intersection found")
+		if !(0 <= s && s <= 1 && 0 <= t && t <= 1) {
+			return Point{0, 0}, errors.New("no intersection found")
 		} else {
-			x := (ONE.Sub(s)).Mul(L1.p1.x).Add(s.Mul(L1.p2.x))
-			y := (ONE.Sub(s)).Mul(L1.p1.y).Add(s.Mul(L1.p2.y))
-			return (Point{x, y}), nil
+			return (Point{(1-s)*L1.p1.x + s*L1.p2.x, (1-s)*L1.p1.y + s*L1.p2.y}), nil
 		}
 	} else {
-		return Point{ZERO, ZERO}, errors.New("no intersection found")
+		return Point{0, 0}, errors.New("no intersection found")
 	}
 }
 
@@ -61,18 +50,16 @@ type LineSegment struct {
 	p2 Point
 }
 
-func (ls *LineSegment) L2() dec.Decimal {
-	return ls.p1.x.Sub(ls.p2.x).Pow(TWO).Add((ls.p1.y.Sub(ls.p2.y)).Pow(TWO))
+func (ls *LineSegment) L2() float64 {
+	return math.Sqrt(math.Pow(ls.p1.x-ls.p2.x, 2) + math.Pow(ls.p1.y-ls.p2.y, 2))
 }
 
 func (ls *LineSegment) Mid() Point {
-	x := (ls.p1.x.Add(ls.p2.x)).Div(TWO)
-	y := (ls.p1.y.Add(ls.p2.y)).Div(TWO)
-	return Point{x, y}
+	return Point{(ls.p1.x + ls.p2.x) / 2, (ls.p1.y + ls.p2.y) / 2}
 }
 
 func (ls *LineSegment) Direction(pt Point) bool {
-	direction := (&LineSegment{ls.p1, END}).L2().LessThan((&LineSegment{ls.p2, END}).L2())
+	direction := (&LineSegment{ls.p1, END}).L2() > (&LineSegment{ls.p2, END}).L2()
 	if pt == ls.p2 {
 		return direction
 	} else {
@@ -90,23 +77,24 @@ func (ls *LineSegment) OtherEnd(pt Point) Point {
 
 // PolygonSolver
 type PolygonSolver struct {
-	n int64
+	n int
+
+	// self.polygon = self.create_regular_polygon(n)
+	// self.line_segments = None
+	// self.point_ls = None
+	// self.create_line_segments()
 }
 
-func FindNextCoordinate(pt Point, theta dec.Decimal) Point {
-	// x = pt.x * cos(t) - pt.y * sin(t)
-	// y = pt.x * sin(t) + pt.y * cos(t)
-	x := pt.x.Mul(theta.Cos()).Add(pt.y.Mul(theta.Sin()).Neg())
-	y := pt.x.Mul(theta.Sin()).Add(pt.y.Mul(theta.Cos()))
-	return Point{x, y}
+func FindNextCoordinate(pt Point, theta float64) Point {
+	return Point{pt.x*math.Cos(theta) - pt.y*math.Sin(theta), pt.x*math.Sin(theta) + pt.y*math.Cos(theta)}
 }
 
 func (ps PolygonSolver) CreateRegularPolygon() []Point {
-	theta := dec.NewFromInt(2).Div(dec.NewFromInt(ps.n)).Mul(dec.NewFromFloat(math.Pi))
+	theta := 2.0 / float64(ps.n) * math.Pi
 	polygon := make([]Point, 0)
 	previous := START
 
-	for i := int64(0); i < ps.n; i++ {
+	for i := 0; i < ps.n; i++ {
 		polygon = append(polygon, previous)
 		previous = FindNextCoordinate(previous, theta)
 	}
@@ -136,10 +124,7 @@ func main() {
 	// required.Add("biology")
 	// fmt.Println(required)
 	polygonSolver := PolygonSolver{4}
-
-	for _, v := range polygonSolver.CreateRegularPolygon() {
-		fmt.Println(v.ToString())
-	}
+	fmt.Println(polygonSolver.CreateRegularPolygon())
 }
 
 // Define PolygonSolver
