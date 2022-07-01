@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"math"
 
+	mapset "github.com/deckarep/golang-set/v2"
 	_ "github.com/shopspring/decimal"
+	combin "gonum.org/v1/gonum/stat/combin"
 )
 
 // Constants
@@ -16,6 +18,12 @@ var START Point = Point{1, 0}
 type Point struct {
 	x float64
 	y float64
+}
+
+const float64EqualityThreshold = 1e-15
+
+func almostEqual(a, b float64) bool {
+	return math.Abs(a-b) <= float64EqualityThreshold
 }
 
 func FromIntersection(L1, L2 LineSegment) (Point, error) {
@@ -78,15 +86,18 @@ func (ls *LineSegment) OtherEnd(pt Point) Point {
 // PolygonSolver
 type PolygonSolver struct {
 	n int
-
-	// self.polygon = self.create_regular_polygon(n)
-	// self.line_segments = None
-	// self.point_ls = None
-	// self.create_line_segments()
 }
 
 func FindNextCoordinate(pt Point, theta float64) Point {
-	return Point{pt.x*math.Cos(theta) - pt.y*math.Sin(theta), pt.x*math.Sin(theta) + pt.y*math.Cos(theta)}
+	x := pt.x*math.Cos(theta) - pt.y*math.Sin(theta)
+	y := pt.x*math.Sin(theta) + pt.y*math.Cos(theta)
+	if almostEqual(x, 0) {
+		x = 0
+	}
+	if almostEqual(y, 0) {
+		y = 0
+	}
+	return Point{x, y}
 }
 
 func (ps PolygonSolver) CreateRegularPolygon() []Point {
@@ -101,14 +112,36 @@ func (ps PolygonSolver) CreateRegularPolygon() []Point {
 	return polygon
 }
 
-// func (ps PolygonSolver) Lines() []LineSegment {
-// 	list := combin.Combinations(ps.n, 2)
-// 	allLineSegments := make([]LineSegment, 0)
-// 	for _, v := range list {
-// 		allLineSegments = append(allLineSegments, v)
-// 	}
-// 	return allLineSegments
-// }
+func (ps PolygonSolver) LineSegments() []LineSegment {
+	c := combin.Combinations(ps.n, 2)
+	p := ps.CreateRegularPolygon()
+	lineSegments := make([]LineSegment, len(c))
+	for i, v := range c {
+		start, end := p[v[0]], p[v[1]]
+		lineSegments[i] = LineSegment{start, end}
+	}
+	return lineSegments
+}
+
+func (ps PolygonSolver) GetLineToPoints() map[LineSegment]mapset.Set[Point] {
+	lineToPoints := make(map[LineSegment]mapset.Set[Point])
+	lines := ps.LineSegments()
+	for _, line := range lines {
+		lineToPoints[line] = mapset.NewSet(line.p1, line.p2)
+	}
+
+	c := combin.Combinations(len(lines), 2)
+	for _, v := range c {
+		start, end := lines[v[0]], lines[v[1]]
+		point, err := FromIntersection(start, end)
+
+		if err == nil {
+			lineToPoints[start].Add(point)
+			lineToPoints[end].Add(point)
+		}
+	}
+	return lineToPoints
+}
 
 func main() {
 	// To avoid static code errors for unused vars
@@ -123,13 +156,20 @@ func main() {
 	// required := mapset.NewSet[string]()
 	// required.Add("biology")
 	// fmt.Println(required)
-	polygonSolver := PolygonSolver{4}
-	fmt.Println(polygonSolver.CreateRegularPolygon())
+	polygonSolver := PolygonSolver{6}
+	fmt.Println((polygonSolver.GetLineToPoints()))
 }
-
-// Define PolygonSolver
-// Define main()
 
 // Create all the polygon nodes
 // For each polygon node, create a line segment to every other polygon node, and place all the line segments into a slice
 // For each line segment,
+
+// Goroutine definition
+func Solve() {
+	// needs to receive multiple values
+	// need to pass the result of this node to downstream nodes
+
+}
+
+// Create one goroutine. This goroutine will spawn more goroutines and pass its result to it
+// Infinite loop and select statement, wait until received values on all channels, take sum, then send
