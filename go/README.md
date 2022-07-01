@@ -28,3 +28,4 @@ The pub-sub model can allow for symmetry to be handled inside the primary gorout
 3. Using goroutines to speed up processing by saturating available cores
 4. Using bottom-up dynamic programming and avoiding the recursion limit
 5. Using symmetry to reduce duplicate calculations
+6. Reduce type conversions

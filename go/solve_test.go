@@ -2,11 +2,13 @@ package main
 
 import (
 	"testing"
+
+	dec "github.com/shopspring/decimal"
 )
 
 func TestGetPointToChannelTotalPoints(t *testing.T) {
-	precision := 3
-	tolerance := 1e-2
+	precision := int32(3)
+	tolerance := dec.NewFromFloatWithExponent(0.1, -2)
 
 	for i := 4; i < 60; i += 2 {
 		ps := PolygonSolver{i}
