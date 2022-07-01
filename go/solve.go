@@ -123,6 +123,8 @@ type PolygonSolver struct {
 }
 
 func FindNextCoordinate(pt Point, theta float64, precision int, tolerance float64) Point {
+	// Creates the next polygon point from an existing polygon point
+	// TODO: Make concurrent by multiplying theta by a constant in a loop
 	x := pt.x*math.Cos(theta) - pt.y*math.Sin(theta)
 	y := pt.x*math.Sin(theta) + pt.y*math.Cos(theta)
 	if almostEqual(x, 0, tolerance) {
@@ -162,7 +164,7 @@ func (ps PolygonSolver) LineSegments(precision int, tolerance float64) []LineSeg
 func (ps PolygonSolver) GetLineToPoints(precision int, tolerance float64) LineToPoints {
 	// For all combinations of line segments, create intersection points
 	// Returns the map of unbroken line segments to points on the line segments
-	// TODO: Make concurrent
+	// TODO: Make concurrent since this is an embarrassingly parallel problem
 	lineToPoints := make(LineToPoints)
 	lines := ps.LineSegments(precision, tolerance)
 
@@ -256,16 +258,33 @@ func GetSortedPoints(precision int, tolerance float64, n int) ByXY {
 func d(x, y int) int {
 	if x%y == 0 {
 		return 1
-	} else {
-		return 0
 	}
+	return 0
 }
 
 func TheoreticalTotalPoints(n int) int {
+	// Returns the theoretical number of total points for the intersections of all line segments
+	// created by the vertices of a polygon given by the sum of polygon vertices and interior
+	// intersection points
 	p := func(x, y int) int {
 		return int(math.Pow(float64(x), float64(y)))
 	}
-	interior := combin.Binomial(n, 4) + (-5*p(n, 3)+45*p(n, 2)-70*n+24)/24*d(n, 2) - (3*n/2)*d(n, 4) + (-45*p(n, 2)+262*n)/6*d(n, 6) + 42*n*d(n, 12) + 60*n*d(n, 18) + 35*n*d(n, 24) - 38*n*d(n, 30) - 82*n*d(n, 42) - 330*n*d(n, 60) - 144*n*d(n, 84) - 96*n*d(n, 90) - 144*n*d(n, 120) - 96*n*d(n, 210)
+
+	// tN denotes the term with divisible check in N
+	t2 := (-5*p(n, 3) + 45*p(n, 2) - 70*n + 24) / 24 * d(n, 2)
+	t4 := (3 * n / 2) * d(n, 4)
+	t6 := (-45*p(n, 2) + 262*n) / 6 * d(n, 6)
+	t12 := 42 * n * d(n, 12)
+	t18 := 60 * n * d(n, 18)
+	t24 := 35 * n * d(n, 24)
+	t30 := 38 * n * d(n, 30)
+	t42 := 82 * n * d(n, 42)
+	t60 := 330 * n * d(n, 60)
+	t84 := 144 * n * d(n, 84)
+	t90 := 96 * n * d(n, 90)
+	t120 := 144 * n * d(n, 120)
+	t210 := 96 * n * d(n, 210)
+	interior := combin.Binomial(n, 4) + t2 - t4 + t6 + t12 + t18 + t24 - t30 - t42 - t60 - t84 - t90 - t120 - t210
 	return interior + n
 }
 
