@@ -12,8 +12,8 @@ import (
 )
 
 // Constants
-const precision = 15
-const float64EqualityThreshold = 1e-15
+const precision = 14
+const float64EqualityThreshold = 1e-13
 
 var END Point = Point{-1, 0}
 var START Point = Point{1, 0}
@@ -211,8 +211,6 @@ func (ps PolygonSolver) GetFullAdjacencyList(lineToPoints LineToPoints) Adjacenc
 	return adjacencyList
 }
 
-// Solve this single-threaded first
-
 // Create a channel for every goroutine
 
 // # Approach One: Publish to all relevant channels
@@ -221,7 +219,6 @@ func (ps PolygonSolver) GetFullAdjacencyList(lineToPoints LineToPoints) Adjacenc
 // At the end of the goroutine, it writes back to all channels that requires its result.
 
 // The goroutine needs to take in:
-
 // 1. Its input channel where it will read from
 // 2. The slice of output channels it needs to write to
 
@@ -229,21 +226,18 @@ func (ps PolygonSolver) GetFullAdjacencyList(lineToPoints LineToPoints) Adjacenc
 // You can delegate the responsibility of sending the message to the primary goroutine in a pub-sub model.
 // The pub-sub model can allow for symmetry to be handled inside the primary goroutine.
 
-func main() {
-	polygonSolver := PolygonSolver{6}
-	lineToPoints := polygonSolver.GetLineToPoints()
-	adjacencyList := polygonSolver.GetFullAdjacencyList(lineToPoints)
-
+func (ps PolygonSolver) GetPointToChannel(adjacencyList AdjacencyList) map[Point]chan uint {
 	pointToChannel := make(map[Point]chan uint)
 	for p := range adjacencyList {
 		pointToChannel[p] = make(chan uint)
 	}
-	sortedPoints := make(ByXY, 0)
-	for p := range pointToChannel {
-		sortedPoints = append(sortedPoints, p)
-	}
-	sort.Sort(sortedPoints)
-	for i, p := range sortedPoints {
-		fmt.Println(i, p)
-	}
+	return pointToChannel
+}
+
+func main() {
+	n := 6
+	ps := PolygonSolver{n}
+	lineToPoints := ps.GetLineToPoints()
+	adjacencyList := ps.GetFullAdjacencyList(lineToPoints)
+	fmt.Println(ps.GetPointToChannel(adjacencyList))
 }
