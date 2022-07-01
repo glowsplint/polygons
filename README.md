@@ -12,6 +12,10 @@ Consider an n-sided polygon where n is even. We draw all the lines that connect 
 
 A solution is provided in `polygons.ipynb`. We think that the growth rate in _n_ (where _n_ is the number of sides of the polygon) is _exp(n^3)_.
 
+<p align="center" width="100%">
+   <img src='assets/output.png' width='600' alt='Growth Rate Plot'>
+</p>
+
 ### Create the regular polygon
 
 `PolygonSolver.__init__()`
