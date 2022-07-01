@@ -12,6 +12,7 @@ import (
 )
 
 // Constants
+const precision = 15
 const float64EqualityThreshold = 1e-15
 
 var END Point = Point{-1, 0}
@@ -27,6 +28,12 @@ type LineToPoints = map[LineSegment]mapset.Set[Point]
 type PointToLines = map[Point]mapset.Set[LineSegment]
 type AdjacencyList = map[Point]mapset.Set[Point]
 
+func roundFloat(val float64) float64 {
+	ratio := math.Pow(10, float64(precision))
+	return math.Round(val*ratio) / ratio
+}
+
+// To allow sorting of points
 type ByXY []Point
 
 func (a ByXY) Len() int {
@@ -52,8 +59,7 @@ func almostEqual(a, b float64) bool {
 }
 
 func FromIntersection(L1, L2 LineSegment) (Point, error) {
-	// Alternate constructor for Point via intersection of two LineSegments
-	// Returns a pointer to the Point instance
+	// Constructor for Point via the intersection of two line segments
 	a1, b1, c1 := (L1.p2.x - L1.p1.x), (L2.p1.x - L2.p2.x), (L2.p1.x - L1.p1.x)
 	a2, b2, c2 := (L1.p2.y - L1.p1.y), (L2.p1.y - L2.p2.y), (L2.p1.y - L1.p1.y)
 
@@ -77,7 +83,7 @@ func FromIntersection(L1, L2 LineSegment) (Point, error) {
 			if almostEqual(y, 0) {
 				y = 0
 			}
-			return (Point{x, y}), nil
+			return (Point{roundFloat(x), roundFloat(y)}), nil
 		}
 	} else {
 		return pt, errors.New("no intersection found")
@@ -127,10 +133,11 @@ func FindNextCoordinate(pt Point, theta float64) Point {
 	if almostEqual(y, 0) {
 		y = 0
 	}
-	return Point{x, y}
+	return Point{roundFloat(x), roundFloat(y)}
 }
 
 func (ps PolygonSolver) CreateRegularPolygon() []Point {
+	// Returns the polygon vertices
 	theta := 2.0 / float64(ps.n) * math.Pi
 	polygon := make([]Point, 0)
 	previous := START
@@ -143,6 +150,7 @@ func (ps PolygonSolver) CreateRegularPolygon() []Point {
 }
 
 func (ps PolygonSolver) LineSegments() []LineSegment {
+	// For all combinations of polygon vertices, create line segments
 	c := combin.Combinations(ps.n, 2)
 	p := ps.CreateRegularPolygon()
 	lineSegments := make([]LineSegment, len(c))
@@ -154,11 +162,13 @@ func (ps PolygonSolver) LineSegments() []LineSegment {
 }
 
 func (ps PolygonSolver) GetLineToPoints() LineToPoints {
+	// For all combinations of line segments, create intersection points
 	// Returns the map of unbroken line segments to points on the line segments
 	// TODO: Make concurrent
 	lineToPoints := make(LineToPoints)
 	lines := ps.LineSegments()
-	// First add both known polygon points onto the line
+
+	// Add both known polygon points onto the line
 	for _, line := range lines {
 		lineToPoints[line] = mapset.NewSet(line.p1, line.p2)
 	}
@@ -168,7 +178,6 @@ func (ps PolygonSolver) GetLineToPoints() LineToPoints {
 	for _, v := range c {
 		first, second := lines[v[0]], lines[v[1]]
 		point, err := FromIntersection(first, second)
-
 		if err == nil {
 			lineToPoints[first].Add(point)
 			lineToPoints[second].Add(point)
@@ -177,7 +186,8 @@ func (ps PolygonSolver) GetLineToPoints() LineToPoints {
 	return lineToPoints
 }
 
-func (ps PolygonSolver) GetAdjacencyList(lineToPoints LineToPoints) AdjacencyList {
+func (ps PolygonSolver) GetFullAdjacencyList(lineToPoints LineToPoints) AdjacencyList {
+	// Returns the full adjacency list of nodes and their connected nodes (ignoring direction)
 	adjacencyList := make(AdjacencyList)
 	for _, points := range lineToPoints {
 		// Sort all the points on the unbroken line and get each broken line segment
@@ -201,56 +211,39 @@ func (ps PolygonSolver) GetAdjacencyList(lineToPoints LineToPoints) AdjacencyLis
 	return adjacencyList
 }
 
-func main() {
-	// somePoint := Point{3, 10}
-	// someLineSegment := LineSegment{Point{0, 0}, Point{1, 2}}
-	// fmt.Println(somePoint)
-	// fmt.Println(fromIntersection(someLineSegment, someLineSegment))
-	// fmt.Println(someLineSegment.L2())
-	// fmt.Println(someLineSegment.Mid())
-	// fmt.Println(someLineSegment.Direction(someLineSegment.p1))
-	// fmt.Println(someLineSegment.OtherEnd(someLineSegment.p1))
-	polygonSolver := PolygonSolver{6}
-	lineToPoints := polygonSolver.GetLineToPoints()
-	// fmt.Println(lineToPoints)
-	fmt.Println((polygonSolver.GetAdjacencyList(lineToPoints)))
-}
+// Solve this single-threaded first
 
-// Create all the polygon nodes
-// For each polygon node, create a line segment to every other polygon node, and place all the line segments into a slice
-// For each line segment,
+// Create a channel for every goroutine
 
-// Goroutine definition
-// func Solve() {
-// needs to receive multiple values
-// need to pass the result of this node to downstream nodes
+// # Approach One: Publish to all relevant channels
 
-// }
+// Each vertex has its own channel. When the channel is full, the goroutine kicks off.
+// At the end of the goroutine, it writes back to all channels that requires its result.
 
-// Approach One: Publish to all relevant channels
-// Each vertex has its own buffered channel. When the buffered channel is full, the goroutine kicks off.
-// At the end of the goroutine, it writes to all buffered channels that requires its result.
 // The goroutine needs to take in:
-// 1. Its input buffered channel where it will read from
-// 2. The slice of output buffered channels it needs to write to
+
+// 1. Its input channel where it will read from
+// 2. The slice of output channels it needs to write to
+
 // The benefit is that we don't have to topo-sort ahead of time, everything just works as-is.
 // You can delegate the responsibility of sending the message to the primary goroutine in a pub-sub model.
 // The pub-sub model can allow for symmetry to be handled inside the primary goroutine.
 
-// Approach Two:
-// 1. Topological sort on the nodes
-// 2. Create a queue with these nodes
-// 3. Create a pool of worker nodes
-// 4. When a task is done, the goroutine sends its output on a single channel.
-// 5. The queue processor maintains a single channel and stores the output. It spins up new goroutines when they can be calculated.
-// 6. An indegrees array is maintained to trigger the spinning up of new goroutines.
+func main() {
+	polygonSolver := PolygonSolver{6}
+	lineToPoints := polygonSolver.GetLineToPoints()
+	adjacencyList := polygonSolver.GetFullAdjacencyList(lineToPoints)
 
-// Optimisations
-// 1. We can discard the values of earlier nodes once they are no longer required
-
-// Improvements to be made:
-// 1. Using goroutines to speed up processing by saturating available cores
-// 2. Using bottom-up dynamic programming and avoiding the recursion limit
-// 3. Using symmetry to reduce duplicate calculations
-
-//
+	pointToChannel := make(map[Point]chan uint)
+	for p := range adjacencyList {
+		pointToChannel[p] = make(chan uint)
+	}
+	sortedPoints := make(ByXY, 0)
+	for p := range pointToChannel {
+		sortedPoints = append(sortedPoints, p)
+	}
+	sort.Sort(sortedPoints)
+	for i, p := range sortedPoints {
+		fmt.Println(i, p)
+	}
+}
