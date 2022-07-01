@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sort"
 
 	mapset "github.com/deckarep/golang-set/v2"
 	_ "github.com/shopspring/decimal"
@@ -11,6 +12,8 @@ import (
 )
 
 // Constants
+const float64EqualityThreshold = 1e-15
+
 var END Point = Point{-1, 0}
 var START Point = Point{1, 0}
 
@@ -20,7 +23,21 @@ type Point struct {
 	y float64
 }
 
-const float64EqualityThreshold = 1e-15
+type LineToPoints = map[LineSegment]mapset.Set[Point]
+
+type ByXY []Point
+
+func (a ByXY) Len() int {
+	return len(a)
+}
+
+func (a ByXY) Swap(i, j int) {
+	a[i], a[j] = a[j], a[i]
+}
+
+func (a ByXY) Less(i, j int) bool {
+	return a[i].x < a[j].x && a[i].y < a[j].y
+}
 
 func almostEqual(a, b float64) bool {
 	return math.Abs(a-b) <= float64EqualityThreshold
@@ -50,9 +67,6 @@ func FromIntersection(L1, L2 LineSegment) (Point, error) {
 	}
 }
 
-// func (p *Point) ConnectingEdges()
-
-// LineSegment
 type LineSegment struct {
 	p1 Point
 	p2 Point
@@ -83,7 +97,6 @@ func (ls *LineSegment) OtherEnd(pt Point) Point {
 	}
 }
 
-// PolygonSolver
 type PolygonSolver struct {
 	n int
 }
@@ -123,8 +136,9 @@ func (ps PolygonSolver) LineSegments() []LineSegment {
 	return lineSegments
 }
 
-func (ps PolygonSolver) GetLineToPoints() map[LineSegment]mapset.Set[Point] {
-	lineToPoints := make(map[LineSegment]mapset.Set[Point])
+func (ps PolygonSolver) GetLineToPoints() LineToPoints {
+	// TODO: Make concurrent
+	lineToPoints := make(LineToPoints)
 	lines := ps.LineSegments()
 	for _, line := range lines {
 		lineToPoints[line] = mapset.NewSet(line.p1, line.p2)
@@ -143,8 +157,38 @@ func (ps PolygonSolver) GetLineToPoints() map[LineSegment]mapset.Set[Point] {
 	return lineToPoints
 }
 
+func (ps PolygonSolver) GetAdjacencyList() map[Point]LineSegment {
+	// Returns the adjacency list of the graph for every vertex (which has both polygon vertices and
+	// intersection points).
+	var adjacencyList map[Point]LineSegment
+	return adjacencyList
+}
+
+func (ps PolygonSolver) GetBrokenLineSegments(lineToPoints LineToPoints) mapset.Set[LineSegment] {
+	brokenLineSegments := mapset.NewSet[LineSegment]()
+	for line, points := range lineToPoints {
+		// A line segment with only two points on it, is already the smallest possible line segment
+		if points.Cardinality() == 2 {
+			brokenLineSegments.Add(line)
+			continue
+		}
+
+		// Sort all the points on the unbroken line and get each broken line segment
+		sortedPoints := points.ToSlice()
+		sort.Sort(ByXY(sortedPoints))
+
+		for i := 1; i < len(sortedPoints); i++ {
+			if sortedPoints[i] == sortedPoints[i-1] {
+				continue
+			}
+			edge := LineSegment{sortedPoints[i], sortedPoints[i-1]}
+			brokenLineSegments.Add(edge)
+		}
+	}
+	return brokenLineSegments
+}
+
 func main() {
-	// To avoid static code errors for unused vars
 	// somePoint := Point{3, 10}
 	// someLineSegment := LineSegment{Point{0, 0}, Point{1, 2}}
 	// fmt.Println(somePoint)
@@ -157,7 +201,8 @@ func main() {
 	// required.Add("biology")
 	// fmt.Println(required)
 	polygonSolver := PolygonSolver{6}
-	fmt.Println((polygonSolver.GetLineToPoints()))
+	lineToPoints := polygonSolver.GetLineToPoints()
+	fmt.Println((polygonSolver.GetBrokenLineSegments(lineToPoints)))
 }
 
 // Create all the polygon nodes
@@ -165,11 +210,15 @@ func main() {
 // For each line segment,
 
 // Goroutine definition
-func Solve() {
-	// needs to receive multiple values
-	// need to pass the result of this node to downstream nodes
+// func Solve() {
+// needs to receive multiple values
+// need to pass the result of this node to downstream nodes
 
-}
+// }
 
 // Create one goroutine. This goroutine will spawn more goroutines and pass its result to it
 // Infinite loop and select statement, wait until received values on all channels, take sum, then send
+
+// Improvements to be made:
+// 1. Using goroutines to speed up processing by saturating available cores
+// 2. Using bottom-up dynamic programming to avoid hitting the recursion limit
