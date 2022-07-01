@@ -24,6 +24,8 @@ type Point struct {
 }
 
 type LineToPoints = map[LineSegment]mapset.Set[Point]
+type PointToLines = map[Point]mapset.Set[LineSegment]
+type AdjacencyList = map[Point]mapset.Set[Point]
 
 type ByXY []Point
 
@@ -36,7 +38,13 @@ func (a ByXY) Swap(i, j int) {
 }
 
 func (a ByXY) Less(i, j int) bool {
-	return a[i].x < a[j].x && a[i].y < a[j].y
+	if a[i].x < a[j].x {
+		return true
+	} else if a[i].x > a[j].x {
+		return false
+	} else {
+		return a[i].y < a[j].y
+	}
 }
 
 func almostEqual(a, b float64) bool {
@@ -53,17 +61,26 @@ func FromIntersection(L1, L2 LineSegment) (Point, error) {
 	Dx := c1*b2 - b1*c2
 	Dy := a1*c2 - c1*a2
 
+	var pt Point
 	if D != 0 {
 		s := Dx / D
 		t := Dy / D
 
 		if !(0 <= s && s <= 1 && 0 <= t && t <= 1) {
-			return Point{0, 0}, errors.New("no intersection found")
+			return pt, errors.New("no intersection found")
 		} else {
-			return (Point{(1-s)*L1.p1.x + s*L1.p2.x, (1-s)*L1.p1.y + s*L1.p2.y}), nil
+			x := (1-s)*L1.p1.x + s*L1.p2.x
+			y := (1-s)*L1.p1.y + s*L1.p2.y
+			if almostEqual(x, 0) {
+				x = 0
+			}
+			if almostEqual(y, 0) {
+				y = 0
+			}
+			return (Point{x, y}), nil
 		}
 	} else {
-		return Point{0, 0}, errors.New("no intersection found")
+		return pt, errors.New("no intersection found")
 	}
 }
 
@@ -137,55 +154,51 @@ func (ps PolygonSolver) LineSegments() []LineSegment {
 }
 
 func (ps PolygonSolver) GetLineToPoints() LineToPoints {
+	// Returns the map of unbroken line segments to points on the line segments
 	// TODO: Make concurrent
 	lineToPoints := make(LineToPoints)
 	lines := ps.LineSegments()
+	// First add both known polygon points onto the line
 	for _, line := range lines {
 		lineToPoints[line] = mapset.NewSet(line.p1, line.p2)
 	}
 
+	// Intersect all line segments
 	c := combin.Combinations(len(lines), 2)
 	for _, v := range c {
-		start, end := lines[v[0]], lines[v[1]]
-		point, err := FromIntersection(start, end)
+		first, second := lines[v[0]], lines[v[1]]
+		point, err := FromIntersection(first, second)
 
 		if err == nil {
-			lineToPoints[start].Add(point)
-			lineToPoints[end].Add(point)
+			lineToPoints[first].Add(point)
+			lineToPoints[second].Add(point)
 		}
 	}
 	return lineToPoints
 }
 
-func (ps PolygonSolver) GetAdjacencyList() map[Point]LineSegment {
-	// Returns the adjacency list of the graph for every vertex (which has both polygon vertices and
-	// intersection points).
-	var adjacencyList map[Point]LineSegment
-	return adjacencyList
-}
-
-func (ps PolygonSolver) GetBrokenLineSegments(lineToPoints LineToPoints) mapset.Set[LineSegment] {
-	brokenLineSegments := mapset.NewSet[LineSegment]()
-	for line, points := range lineToPoints {
-		// A line segment with only two points on it, is already the smallest possible line segment
-		if points.Cardinality() == 2 {
-			brokenLineSegments.Add(line)
-			continue
-		}
-
+func (ps PolygonSolver) GetAdjacencyList(lineToPoints LineToPoints) AdjacencyList {
+	adjacencyList := make(AdjacencyList)
+	for _, points := range lineToPoints {
 		// Sort all the points on the unbroken line and get each broken line segment
 		sortedPoints := points.ToSlice()
-		sort.Sort(ByXY(sortedPoints))
+		sort.Stable(ByXY(sortedPoints))
 
 		for i := 1; i < len(sortedPoints); i++ {
-			if sortedPoints[i] == sortedPoints[i-1] {
-				continue
+			if _, ok := adjacencyList[sortedPoints[i]]; ok {
+				adjacencyList[sortedPoints[i]].Add(sortedPoints[i-1])
+			} else {
+				adjacencyList[sortedPoints[i]] = mapset.NewSet(sortedPoints[i-1])
 			}
-			edge := LineSegment{sortedPoints[i], sortedPoints[i-1]}
-			brokenLineSegments.Add(edge)
+
+			if _, ok := adjacencyList[sortedPoints[i-1]]; ok {
+				adjacencyList[sortedPoints[i-1]].Add(sortedPoints[i])
+			} else {
+				adjacencyList[sortedPoints[i-1]] = mapset.NewSet(sortedPoints[i])
+			}
 		}
 	}
-	return brokenLineSegments
+	return adjacencyList
 }
 
 func main() {
@@ -197,12 +210,10 @@ func main() {
 	// fmt.Println(someLineSegment.Mid())
 	// fmt.Println(someLineSegment.Direction(someLineSegment.p1))
 	// fmt.Println(someLineSegment.OtherEnd(someLineSegment.p1))
-	// required := mapset.NewSet[string]()
-	// required.Add("biology")
-	// fmt.Println(required)
 	polygonSolver := PolygonSolver{6}
 	lineToPoints := polygonSolver.GetLineToPoints()
-	fmt.Println((polygonSolver.GetBrokenLineSegments(lineToPoints)))
+	// fmt.Println(lineToPoints)
+	fmt.Println((polygonSolver.GetAdjacencyList(lineToPoints)))
 }
 
 // Create all the polygon nodes
@@ -216,9 +227,30 @@ func main() {
 
 // }
 
-// Create one goroutine. This goroutine will spawn more goroutines and pass its result to it
-// Infinite loop and select statement, wait until received values on all channels, take sum, then send
+// Approach One: Publish to all relevant channels
+// Each vertex has its own buffered channel. When the buffered channel is full, the goroutine kicks off.
+// At the end of the goroutine, it writes to all buffered channels that requires its result.
+// The goroutine needs to take in:
+// 1. Its input buffered channel where it will read from
+// 2. The slice of output buffered channels it needs to write to
+// The benefit is that we don't have to topo-sort ahead of time, everything just works as-is.
+// You can delegate the responsibility of sending the message to the primary goroutine in a pub-sub model.
+// The pub-sub model can allow for symmetry to be handled inside the primary goroutine.
+
+// Approach Two:
+// 1. Topological sort on the nodes
+// 2. Create a queue with these nodes
+// 3. Create a pool of worker nodes
+// 4. When a task is done, the goroutine sends its output on a single channel.
+// 5. The queue processor maintains a single channel and stores the output. It spins up new goroutines when they can be calculated.
+// 6. An indegrees array is maintained to trigger the spinning up of new goroutines.
+
+// Optimisations
+// 1. We can discard the values of earlier nodes once they are no longer required
 
 // Improvements to be made:
 // 1. Using goroutines to speed up processing by saturating available cores
-// 2. Using bottom-up dynamic programming to avoid hitting the recursion limit
+// 2. Using bottom-up dynamic programming and avoiding the recursion limit
+// 3. Using symmetry to reduce duplicate calculations
+
+//

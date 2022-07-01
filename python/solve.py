@@ -249,7 +249,7 @@ class PolygonSolver:
         self.create_line_segments()
 
         if plot:
-            self.plot_polygon_graph(**kwargs)
+            self.plot_graph(**kwargs)
 
     @classmethod
     def find_next_coordinate(self, xy: tuple[Decimal, Decimal], t: Decimal) -> "Point":
@@ -337,8 +337,6 @@ class PolygonSolver:
             )
 
             for previous, current in zip(sorted_points, sorted_points[1:]):
-                if previous == current:
-                    continue
                 edge = LineSegment(previous, current)
                 line_segments.add(edge)
                 for item in (previous, current):
@@ -351,7 +349,7 @@ class PolygonSolver:
         self.point_ls = point_ls
         return None
 
-    def plot_polygon_graph(
+    def plot_graph(
         self,
         figsize: int = 8,
         lines: bool = True,
@@ -367,7 +365,6 @@ class PolygonSolver:
 
         # Configurations
         limit = 1.1
-        head_width = head_width
         offset = -0.07
 
         _, ax = plt.subplots(figsize=(figsize, figsize))
@@ -381,11 +378,12 @@ class PolygonSolver:
             for line in self.line_segments:
                 color = next(ax._get_lines.prop_cycler)["color"]
                 ax.plot([line.p1.x, line.p2.x], [line.p1.y, line.p2.y], color=color)
+                gradient = line.gradient()
                 plt.arrow(
                     x=line.mid.x,
                     y=line.mid.y,
-                    dx=line.gradient[0],
-                    dy=line.gradient[1],
+                    dx=gradient[0],
+                    dy=gradient[1],
                     lw=0,
                     color=color,
                     length_includes_head=True,
@@ -459,9 +457,7 @@ class PolygonSolver:
 
 @fn_timer
 def main():
-    solver = PolygonSolver(
-        n=6, plot=False, figsize=20, values=False, head_width=0.01, point_size=12
-    )
+    solver = PolygonSolver(n=6, plot=True, figsize=20, values=False)
     solver.check_intersections()
     final = solver.progressive_solve()
     print(final)
