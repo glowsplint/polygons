@@ -457,7 +457,7 @@ class PolygonSolver:
 
 @fn_timer
 def main():
-    solver = PolygonSolver(n=6, plot=True, figsize=20, values=False)
+    solver = PolygonSolver(n=4, plot=True, figsize=20, values=False)
     solver.check_intersections()
     final = solver.progressive_solve()
     print(final)

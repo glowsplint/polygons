@@ -29,3 +29,12 @@ The pub-sub model can allow for symmetry to be handled inside the primary gorout
 4. Using bottom-up dynamic programming and avoiding the recursion limit
 5. Using symmetry to reduce duplicate calculations
 6. Reduce type conversions
+
+# Using float64 vs Decimal struct
+
+If I use float64, I cannot compare values, because there will be infinitesimal differences between values like 1e-14 and -1e-14. I need to truncate first and then place it into the map/set data structure.
+
+However, there are also problems in using Decimals. If I use Decimal, I will also truncate first and then place it into the set structure. However, Decimals will not equal to each other because the struct definition contains a pointer. Two Decimal structs can have the same value, but will not be equal to each other if their pointers point to different memory addresses
+
+A possible workaround is to take .StringFixed(places int32) of the truncated Decimal struct and place it into a hashmap as the key, with the Decimal struct as the value.
+I can then compare two maps for equivalence by only comparing their keys, by checking that all the keys in map1 are found in map2, and that their lengths are the same.
