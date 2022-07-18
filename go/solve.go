@@ -4,9 +4,11 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"os"
 	"strings"
 
 	dec "github.com/shopspring/decimal"
+	combin "gonum.org/v1/gonum/stat/combin"
 )
 
 // Constants
@@ -72,6 +74,49 @@ func isInBetween(left, x, right dec.Decimal) bool {
 	return left.LessThanOrEqual(x) && x.LessThanOrEqual(right)
 }
 
+type LineSegment struct {
+	p1 Point
+	p2 Point
+}
+
+func (ls LineSegment) String() string {
+	return fmt.Sprintf("(%v,%v)", ls.p1.String(), ls.p2.String())
+}
+
+func (ls LineSegment) L2() dec.Decimal {
+	a := ls.p1.x.Sub(ls.p2.x).Pow(TWO)
+	b := ls.p1.y.Sub(ls.p2.y).Pow(TWO)
+	return a.Add(b).Pow(ONE.Div(TWO))
+}
+
+func (ls LineSegment) Mid() Point {
+	x := ls.p1.x.Add(ls.p2.x).Div(TWO)
+	y := ls.p1.y.Add(ls.p2.y).Div(TWO)
+	return Point{x, y}
+}
+
+func (ls *LineSegment) Direction(pt Point) bool {
+	// pt must either be p1 or p2, otherwise the return value does not make sense.
+	p1ToEnd := (&LineSegment{ls.p1, END}).L2()
+	p2ToEnd := (&LineSegment{ls.p2, END}).L2()
+	direction := p1ToEnd.GreaterThan(p2ToEnd)
+	if pt == ls.p2 {
+		return direction
+	} else if pt == ls.p1 {
+		return !direction
+	}
+	panic("The value of argument pt must either be p1 or p2.")
+}
+
+func (ls *LineSegment) OtherEnd(pt Point) Point {
+	if pt == ls.p1 {
+		return ls.p2
+	} else if pt == ls.p2 {
+		return ls.p1
+	}
+	panic("The value of argument pt must either be p1 or p2.")
+}
+
 func FromIntersection(L1, L2 LineSegment, precision int32, tolerance dec.Decimal) (Point, error) {
 	// Constructor for Point via the intersection of two line segments
 	a1 := L1.p2.x.Sub(L1.p1.x)
@@ -108,87 +153,90 @@ func FromIntersection(L1, L2 LineSegment, precision int32, tolerance dec.Decimal
 	}
 }
 
-type LineSegment struct {
-	p1 Point
-	p2 Point
-}
+type LineSegmentSlice []LineSegment
 
-func (ls *LineSegment) L2() dec.Decimal {
-	a := ls.p1.x.Sub(ls.p2.x).Pow(TWO)
-	b := ls.p1.y.Sub(ls.p2.y).Pow(TWO)
-	return a.Add(b).Pow(ONE.Div(TWO))
-}
-
-func (ls *LineSegment) Mid() Point {
-	x := ls.p1.x.Add(ls.p2.x).Div(TWO)
-	y := ls.p1.y.Add(ls.p2.y).Div(TWO)
-	return Point{x, y}
-}
-
-func (ls *LineSegment) Direction(pt Point) bool {
-	// pt must either be p1 or p2, otherwise the return value does not make sense.
-	p1ToEnd := (&LineSegment{ls.p1, END}).L2()
-	p2ToEnd := (&LineSegment{ls.p2, END}).L2()
-	direction := p1ToEnd.GreaterThan(p2ToEnd)
-	if pt == ls.p2 {
-		return direction
-	} else if pt == ls.p1 {
-		return !direction
+func (lsSlice LineSegmentSlice) String() string {
+	results := []string{}
+	for _, ls := range lsSlice {
+		result := fmt.Sprintf("%v", ls)
+		results = append(results, result)
 	}
-	panic("The value of argument pt must either be p1 or p2.")
-}
-
-func (ls *LineSegment) OtherEnd(pt Point) Point {
-	if pt == ls.p1 {
-		return ls.p2
-	} else if pt == ls.p2 {
-		return ls.p1
-	}
-	panic("The value of argument pt must either be p1 or p2.")
+	return strings.Join(results, "\n")
 }
 
 type PolygonSolver struct {
-	n int
+	n         int
+	precision int32
+	tolerance dec.Decimal
 }
 
-func FindNextCoordinate(pt Point, theta dec.Decimal, precision int32, tolerance dec.Decimal) Point {
+func (ps PolygonSolver) FindNextCoordinate(pt Point, theta dec.Decimal) Point {
 	// Creates the next polygon point from an existing polygon point
-	// TODO: Make concurrent by multiplying theta by a constant in a loop
 	x := pt.x.Mul(theta.Cos()).Sub(pt.y.Mul(theta.Sin()))
 	y := pt.x.Mul(theta.Sin()).Add(pt.y.Mul(theta.Cos()))
-	if almostEqual(x, ZERO, tolerance) {
+	if almostEqual(x, ZERO, ps.tolerance) {
 		x = ZERO
 	}
-	if almostEqual(y, ZERO, tolerance) {
+	if almostEqual(y, ZERO, ps.tolerance) {
 		y = ZERO
 	}
-	return Point{x.Round(precision), y.Round(precision)}
+	return Point{x.Round(ps.precision), y.Round(ps.precision)}
 }
 
-func (ps PolygonSolver) CreatePolygonVertices(precision int32, tolerance dec.Decimal) ByXY {
+func (ps PolygonSolver) CreatePolygonVertices() ByXY {
 	// Returns the polygon vertices
+	// TODO: Compare speed with a concurrent version by multiplying theta by a constant in a loop
 	theta := TWO.Div(dec.NewFromInt(int64(ps.n))).Mul(dec.NewFromFloat(math.Pi))
 	polygon := make(ByXY, 0)
 	previous := START
 
 	for i := 0; i < ps.n; i++ {
 		polygon = append(polygon, previous)
-		previous = FindNextCoordinate(previous, theta, precision, tolerance)
+		previous = ps.FindNextCoordinate(previous, theta)
 	}
 	return polygon
 }
 
-// func (ps PolygonSolver) DrawLineSegments(precision int32, tolerance dec.Decimal) []LineSegment {
-// 	// For all combinations of polygon vertices, create line segments
-// 	c := combin.Combinations(ps.n, 2)
-// 	p := ps.CreatePolygonVertices(precision, tolerance)
-// 	lineSegments := make([]LineSegment, len(c))
-// 	for i, v := range c {
-// 		start, end := p[v[0]], p[v[1]]
-// 		lineSegments[i] = LineSegment{start, end}
-// 	}
-// 	return lineSegments
-// }
+func (ps PolygonSolver) GetPolygonVertex(i int, theta dec.Decimal, points chan Point) {
+	// Creates a polygon point from the base polygon point
+	decI := dec.NewFromInt(int64(i))
+	product := decI.Mul(theta)
+	x := START.x.Mul(product.Cos()).Sub(START.y.Mul(product.Sin()))
+	y := START.x.Mul(product.Sin()).Add(START.y.Mul(product.Cos()))
+	if almostEqual(x, ZERO, ps.tolerance) {
+		x = ZERO
+	}
+	if almostEqual(y, ZERO, ps.tolerance) {
+		y = ZERO
+	}
+	points <- Point{x.Round(ps.precision), y.Round(ps.precision)}
+}
+
+func (ps PolygonSolver) CreatePolygonVerticesConcurrently() ByXY {
+	// Returns the polygon vertices generated concurrently
+	theta := TWO.Div(dec.NewFromInt(int64(ps.n))).Mul(dec.NewFromFloat(math.Pi))
+	points := make(chan Point)
+	polygon := make([]Point, 0)
+	for i := 0; i < ps.n; i++ {
+		go ps.GetPolygonVertex(i, theta, points)
+	}
+	for i := 0; i < ps.n; i++ {
+		point := <-points
+		polygon = append(polygon, point)
+	}
+	return polygon
+}
+
+func (ps PolygonSolver) DrawLineSegments(polygonVertices ByXY) LineSegmentSlice {
+	// For all combinations of polygon vertices, create line segments
+	c := combin.Combinations(ps.n, 2)
+	lineSegments := make([]LineSegment, len(c))
+	for i, v := range c {
+		start, end := polygonVertices[v[0]], polygonVertices[v[1]]
+		lineSegments[i] = LineSegment{start, end}
+	}
+	return lineSegments
+}
 
 // func (ps PolygonSolver) MapLineToPoints(precision int32, tolerance dec.Decimal) LineToPoints {
 // 	// For all combinations of line segments, create intersection points
@@ -375,9 +423,15 @@ func (ps PolygonSolver) CreatePolygonVertices(precision int32, tolerance dec.Dec
 
 func main() {
 	// GridSearch()
-	p, t := int32(10), dec.NewFromFloat(1e-7)
+	p, t := int32(15), dec.NewFromFloat(1e-10)
 
-	ps := PolygonSolver{4}
-	vertices := ps.CreatePolygonVertices(p, t)
-	fmt.Println(vertices)
+	ps := PolygonSolver{60, p, t}
+	polygonVertices := ps.CreatePolygonVertices()
+	lineSegments := ps.DrawLineSegments(polygonVertices)
+	file, fileErr := os.Create("results")
+	if fileErr != nil {
+		fmt.Println(fileErr)
+		return
+	}
+	fmt.Fprintf(file, "%v\n", lineSegments)
 }
