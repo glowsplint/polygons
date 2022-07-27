@@ -31,6 +31,10 @@ func (p Point) StringFixed(places int32) string {
 	return fmt.Sprintf("(%v,%v)", p.x.StringFixed(places), p.y.StringFixed(places))
 }
 
+type FixedStringer interface {
+	StringFixed(places int32) string
+}
+
 type LineToPoints = map[LineSegment]map[string]Point
 
 // type PointToLines = map[Point]mapset.Set[LineSegment]
@@ -83,6 +87,10 @@ func (ls LineSegment) String() string {
 	return fmt.Sprintf("(%v,%v)", ls.p1.String(), ls.p2.String())
 }
 
+func (ls LineSegment) StringFixed(places int32) string {
+	return fmt.Sprintf("(%v,%v)", ls.p1.StringFixed(places), ls.p2.StringFixed(places))
+}
+
 func (ls LineSegment) L2() dec.Decimal {
 	a := ls.p1.x.Sub(ls.p2.x).Pow(TWO)
 	b := ls.p1.y.Sub(ls.p2.y).Pow(TWO)
@@ -116,6 +124,8 @@ func (ls *LineSegment) OtherEnd(pt Point) Point {
 	}
 	panic("The value of argument pt must either be p1 or p2.")
 }
+
+type LineSegmentSlice []LineSegment
 
 func FromIntersection(L1, L2 LineSegment, precision int32, tolerance dec.Decimal) (Point, error) {
 	// Constructor for Point via the intersection of two line segments
@@ -152,8 +162,6 @@ func FromIntersection(L1, L2 LineSegment, precision int32, tolerance dec.Decimal
 		return pt, errors.New("no intersection found")
 	}
 }
-
-type LineSegmentSlice []LineSegment
 
 func (lsSlice LineSegmentSlice) String() string {
 	results := []string{}
@@ -212,22 +220,22 @@ func (ps PolygonSolver) GetPolygonVertex(i int, theta dec.Decimal, points chan P
 	points <- Point{x.Round(ps.precision), y.Round(ps.precision)}
 }
 
-func (ps PolygonSolver) CreatePolygonVerticesConcurrently() ByXY {
-	// Returns the polygon vertices generated concurrently
-	theta := TWO.Div(dec.NewFromInt(int64(ps.n))).Mul(dec.NewFromFloat(math.Pi))
-	points := make(chan Point)
-	polygon := make([]Point, 0)
-	for i := 0; i < ps.n; i++ {
-		go ps.GetPolygonVertex(i, theta, points)
-	}
-	for i := 0; i < ps.n; i++ {
-		point := <-points
-		polygon = append(polygon, point)
-	}
-	return polygon
-}
+// func (ps PolygonSolver) CreatePolygonVerticesConcurrently() ByXY {
+// 	// Returns the polygon vertices generated concurrently
+// 	theta := TWO.Div(dec.NewFromInt(int64(ps.n))).Mul(dec.NewFromFloat(math.Pi))
+// 	points := make(chan Point)
+// 	polygon := make([]Point, 0)
+// 	for i := 0; i < ps.n; i++ {
+// 		go ps.GetPolygonVertex(i, theta, points)
+// 	}
+// 	for i := 0; i < ps.n; i++ {
+// 		point := <-points
+// 		polygon = append(polygon, point)
+// 	}
+// 	return polygon
+// }
 
-func (ps PolygonSolver) DrawLineSegments(polygonVertices ByXY) LineSegmentSlice {
+func (ps PolygonSolver) DrawLineSegments(polygonVertices ByXY) []LineSegment {
 	// For all combinations of polygon vertices, create line segments
 	c := combin.Combinations(ps.n, 2)
 	lineSegments := make([]LineSegment, len(c))
@@ -434,4 +442,6 @@ func main() {
 		return
 	}
 	fmt.Fprintf(file, "%v\n", lineSegments)
+	var _ FixedStringer = Point{} // Verify that RHS implements LHS.
+	// var _ I = T{}       // Verify that T implements I.
 }
