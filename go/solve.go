@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"os"
 	"strings"
 
 	dec "github.com/shopspring/decimal"
@@ -19,23 +18,23 @@ var END Point = Point{ONE.Neg(), ZERO}
 var START Point = Point{ONE, ZERO}
 
 type Point struct {
-	x dec.Decimal
-	y dec.Decimal
+	X dec.Decimal `json:"x"`
+	Y dec.Decimal `json:"y"`
 }
 
 func (p Point) String() string {
-	return fmt.Sprintf("(%v,%v)", p.x, p.y)
+	return fmt.Sprintf("(%v,%v)", p.X, p.Y)
 }
 
 func (p Point) StringFixed(places int32) string {
-	return fmt.Sprintf("(%v,%v)", p.x.StringFixed(places), p.y.StringFixed(places))
+	return fmt.Sprintf("(%v,%v)", p.X.StringFixed(places), p.Y.StringFixed(places))
 }
 
 type FixedStringer interface {
 	StringFixed(places int32) string
 }
 
-type LineToPoints = map[LineSegment]map[string]Point
+type LineToPoints map[LineSegment]map[string]Point
 
 // type PointToLines = map[Point]mapset.Set[LineSegment]
 // type AdjacencyList = map[Point]mapset.Set[Point]
@@ -52,12 +51,12 @@ func (a ByXY) Swap(i, j int) {
 }
 
 func (a ByXY) Less(i, j int) bool {
-	if a[i].x.LessThan(a[j].x) {
+	if a[i].X.LessThan(a[j].X) {
 		return true
-	} else if a[i].x.GreaterThan(a[j].x) {
+	} else if a[i].X.GreaterThan(a[j].X) {
 		return false
 	} else {
-		return a[i].y.LessThan(a[j].y)
+		return a[i].Y.LessThan(a[j].Y)
 	}
 }
 
@@ -79,48 +78,48 @@ func isInBetween(left, x, right dec.Decimal) bool {
 }
 
 type LineSegment struct {
-	p1 Point
-	p2 Point
+	P1 Point `json:"p1"`
+	P2 Point `json:"p2"`
 }
 
 func (ls LineSegment) String() string {
-	return fmt.Sprintf("(%v,%v)", ls.p1.String(), ls.p2.String())
+	return fmt.Sprintf("(%v,%v)", ls.P1.String(), ls.P2.String())
 }
 
 func (ls LineSegment) StringFixed(places int32) string {
-	return fmt.Sprintf("(%v,%v)", ls.p1.StringFixed(places), ls.p2.StringFixed(places))
+	return fmt.Sprintf("(%v,%v)", ls.P1.StringFixed(places), ls.P2.StringFixed(places))
 }
 
 func (ls LineSegment) L2() dec.Decimal {
-	a := ls.p1.x.Sub(ls.p2.x).Pow(TWO)
-	b := ls.p1.y.Sub(ls.p2.y).Pow(TWO)
+	a := ls.P1.X.Sub(ls.P2.X).Pow(TWO)
+	b := ls.P1.Y.Sub(ls.P2.Y).Pow(TWO)
 	return a.Add(b).Pow(ONE.Div(TWO))
 }
 
 func (ls LineSegment) Mid() Point {
-	x := ls.p1.x.Add(ls.p2.x).Div(TWO)
-	y := ls.p1.y.Add(ls.p2.y).Div(TWO)
+	x := ls.P1.X.Add(ls.P2.X).Div(TWO)
+	y := ls.P1.Y.Add(ls.P2.Y).Div(TWO)
 	return Point{x, y}
 }
 
 func (ls *LineSegment) Direction(pt Point) bool {
 	// pt must either be p1 or p2, otherwise the return value does not make sense.
-	p1ToEnd := (&LineSegment{ls.p1, END}).L2()
-	p2ToEnd := (&LineSegment{ls.p2, END}).L2()
+	p1ToEnd := (&LineSegment{ls.P1, END}).L2()
+	p2ToEnd := (&LineSegment{ls.P2, END}).L2()
 	direction := p1ToEnd.GreaterThan(p2ToEnd)
-	if pt == ls.p2 {
+	if pt == ls.P2 {
 		return direction
-	} else if pt == ls.p1 {
+	} else if pt == ls.P1 {
 		return !direction
 	}
 	panic("The value of argument pt must either be p1 or p2.")
 }
 
 func (ls *LineSegment) OtherEnd(pt Point) Point {
-	if pt == ls.p1 {
-		return ls.p2
-	} else if pt == ls.p2 {
-		return ls.p1
+	if pt == ls.P1 {
+		return ls.P2
+	} else if pt == ls.P2 {
+		return ls.P1
 	}
 	panic("The value of argument pt must either be p1 or p2.")
 }
@@ -129,12 +128,12 @@ type LineSegmentSlice []LineSegment
 
 func FromIntersection(L1, L2 LineSegment, precision int32, tolerance dec.Decimal) (Point, error) {
 	// Constructor for Point via the intersection of two line segments
-	a1 := L1.p2.x.Sub(L1.p1.x)
-	b1 := L2.p1.x.Sub(L2.p2.x)
-	c1 := L2.p1.x.Sub(L1.p1.x)
-	a2 := L1.p2.y.Sub(L1.p1.y)
-	b2 := L2.p1.y.Sub(L2.p2.y)
-	c2 := L2.p1.y.Sub(L1.p1.y)
+	a1 := L1.P2.X.Sub(L1.P1.X)
+	b1 := L2.P1.X.Sub(L2.P2.X)
+	c1 := L2.P1.X.Sub(L1.P1.X)
+	a2 := L1.P2.Y.Sub(L1.P1.Y)
+	b2 := L2.P1.Y.Sub(L2.P2.Y)
+	c2 := L2.P1.Y.Sub(L1.P1.Y)
 
 	D := a1.Mul(b2).Sub(b1.Mul(a2))
 	Dx := c1.Mul(b2).Sub(b1.Mul(c2))
@@ -148,8 +147,8 @@ func FromIntersection(L1, L2 LineSegment, precision int32, tolerance dec.Decimal
 		if !(isInBetween(ZERO, s, ONE) && isInBetween(ZERO, t, ONE)) {
 			return pt, errors.New("no intersection found")
 		} else {
-			x := ONE.Sub(s).Mul(L1.p1.x).Add(s.Mul(L1.p2.x))
-			y := ONE.Sub(s).Mul(L1.p1.y).Add(s.Mul(L1.p2.y))
+			x := ONE.Sub(s).Mul(L1.P1.X).Add(s.Mul(L1.P2.X))
+			y := ONE.Sub(s).Mul(L1.P1.Y).Add(s.Mul(L1.P2.Y))
 			if almostEqual(x, ZERO, tolerance) {
 				x = ZERO
 			}
@@ -180,8 +179,8 @@ type PolygonSolver struct {
 
 func (ps PolygonSolver) FindNextCoordinate(pt Point, theta dec.Decimal) Point {
 	// Creates the next polygon point from an existing polygon point
-	x := pt.x.Mul(theta.Cos()).Sub(pt.y.Mul(theta.Sin()))
-	y := pt.x.Mul(theta.Sin()).Add(pt.y.Mul(theta.Cos()))
+	x := pt.X.Mul(theta.Cos()).Sub(pt.Y.Mul(theta.Sin()))
+	y := pt.X.Mul(theta.Sin()).Add(pt.Y.Mul(theta.Cos()))
 	if almostEqual(x, ZERO, ps.tolerance) {
 		x = ZERO
 	}
@@ -209,8 +208,8 @@ func (ps PolygonSolver) GetPolygonVertex(i int, theta dec.Decimal, points chan P
 	// Creates a polygon point from the base polygon point
 	decI := dec.NewFromInt(int64(i))
 	product := decI.Mul(theta)
-	x := START.x.Mul(product.Cos()).Sub(START.y.Mul(product.Sin()))
-	y := START.x.Mul(product.Sin()).Add(START.y.Mul(product.Cos()))
+	x := START.X.Mul(product.Cos()).Sub(START.Y.Mul(product.Sin()))
+	y := START.X.Mul(product.Sin()).Add(START.Y.Mul(product.Cos()))
 	if almostEqual(x, ZERO, ps.tolerance) {
 		x = ZERO
 	}
@@ -246,35 +245,30 @@ func (ps PolygonSolver) DrawLineSegments(polygonVertices ByXY) []LineSegment {
 	return lineSegments
 }
 
-// func (ps PolygonSolver) MapLineToPoints(precision int32, tolerance dec.Decimal) LineToPoints {
-// 	// For all combinations of line segments, create intersection points
-// 	// Returns the map of unbroken line segments to points on the line segments
-// 	// TODO: Make concurrent since this is an embarrassingly parallel problem
-// 	// TODO: Need to rewrite some part of this function and earlier
-// 	lineToPoints := make(LineToPoints)
-// 	lines := ps.DrawLineSegments(precision, tolerance)
+func (ps PolygonSolver) MapLineToPoints(lineSegments []LineSegment) LineToPoints {
+	// For all combinations of line segments, create intersection points
+	// Returns the map of unbroken line segments to points on the line segments
+	lineToPoints := make(LineToPoints)
 
-// 	// Add both known polygon points onto the line
-// 	for _, line := range lines {
-// 		lineToPoints[line] = mapset.NewSet(line.p1, line.p2)
-// 	}
+	// Add both known polygon points onto the line
+	for _, line := range lineSegments {
+		lineToPoints[line] = make(map[string]Point)
+		lineToPoints[line][line.P1.StringFixed(ps.precision)] = line.P1
+		lineToPoints[line][line.P2.StringFixed(ps.precision)] = line.P2
+	}
 
-// 	// Intersect all line segments
-// 	c := combin.Combinations(len(lines), 2)
-// 	for _, v := range c {
-// 		first, second := lines[v[0]], lines[v[1]]
-// 		point, err := FromIntersection(first, second, precision, tolerance)
-// 		if err == nil {
-// 			lineToPoints[first].Add(point)
-// 			lineToPoints[second].Add(point)
-// 		}
-// 	}
-// 	// TODO: There are more points than there should be, some of them repeated
-// 	// Try with .String()
-// 	fmt.Println(lineToPoints)
-// 	fmt.Println(len(lineToPoints))
-// 	return lineToPoints
-// }
+	// Intersect all line segments
+	c := combin.Combinations(len(lineSegments), 2)
+	for _, v := range c {
+		first, second := lineSegments[v[0]], lineSegments[v[1]]
+		point, err := FromIntersection(first, second, ps.precision, ps.tolerance)
+		if err == nil {
+			lineToPoints[first][point.StringFixed(ps.precision)] = point
+			lineToPoints[second][point.StringFixed(ps.precision)] = point
+		}
+	}
+	return lineToPoints
+}
 
 // func (ps PolygonSolver) MapFullAdjacencyList(lineToPoints LineToPoints, precision int32) AdjacencyList {
 // 	// Returns the full adjacency list of nodes and their connected nodes (ignoring direction)
@@ -433,15 +427,18 @@ func main() {
 	// GridSearch()
 	p, t := int32(15), dec.NewFromFloat(1e-10)
 
-	ps := PolygonSolver{60, p, t}
+	ps := PolygonSolver{4, p, t}
 	polygonVertices := ps.CreatePolygonVertices()
 	lineSegments := ps.DrawLineSegments(polygonVertices)
-	file, fileErr := os.Create("results")
-	if fileErr != nil {
-		fmt.Println(fileErr)
-		return
-	}
-	fmt.Fprintf(file, "%v\n", lineSegments)
-	var _ FixedStringer = Point{} // Verify that RHS implements LHS.
+	lineToPoints := ps.MapLineToPoints(lineSegments)
+	fmt.Println(lineToPoints)
+
+	// file, fileErr := os.Create("results")
+	// if fileErr != nil {
+	// 	fmt.Println(fileErr)
+	// 	return
+	// }
+	// fmt.Fprintf(file, "%v\n", lineSegments)
+	// var _ FixedStringer = Point{} // Verify that RHS implements LHS.
 	// var _ I = T{}       // Verify that T implements I.
 }
