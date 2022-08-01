@@ -1,4 +1,5 @@
 import itertools
+import json
 import operator
 import sys
 import time
@@ -12,7 +13,7 @@ from tqdm.auto import tqdm
 from decimal_math import cos, sin
 
 TOLERANCE = Decimal(1e-10)
-PRECISION = 10
+PRECISION = 13
 
 END = (-1, 0)
 START = (1, 0)
@@ -295,7 +296,7 @@ class PolygonSolver:
         return [LineSegment(a, b) for a, b in itertools.combinations(self.polygon, 2)]
 
     @cached_property
-    def line2points(self) -> dict[LineSegment, set[Point]]:
+    def line_to_points(self) -> dict[LineSegment, set[Point]]:
         """
         Returns the mapping of unbroken line segments to all points on the respective line segment.
 
@@ -304,18 +305,18 @@ class PolygonSolver:
                 Keys: All line segments in the graph
                 Values: Every point on a given line segment
         """
-        line2points = dict()
+        line_to_points = dict()
         for line in self.lines:
-            line2points[line] = set([line.p1, line.p2])
+            line_to_points[line] = set([line.p1, line.p2])
 
         for a, b in itertools.combinations(self.lines, 2):
             point = Point.from_intersection(a, b)
 
             if point is not None:
-                line2points[a].add(point)
-                line2points[b].add(point)
+                line_to_points[a].add(point)
+                line_to_points[b].add(point)
 
-        return line2points
+        return line_to_points
 
     def create_line_segments(self) -> None:
         """
@@ -326,7 +327,7 @@ class PolygonSolver:
 
         print("Creating line segments...")
 
-        for ls, p in tqdm(self.line2points.items()):
+        for ls, p in tqdm(self.line_to_points.items()):
             if len(p) == 2:
                 line_segments.add(ls)
                 continue
@@ -347,6 +348,9 @@ class PolygonSolver:
 
         self.line_segments = line_segments
         self.point_ls = point_ls
+
+        # Checks that the generated number of interior points are correct
+        self.check_intersections()
         return None
 
     def plot_graph(
@@ -357,7 +361,7 @@ class PolygonSolver:
         values: bool = True,
         point_size: float = 1,
         head_width: float = 0.03,
-    ):
+    ) -> None:
         x, y = (
             [point.x for point in self.point_ls],
             [point.y for point in self.point_ls],
@@ -403,6 +407,10 @@ class PolygonSolver:
         """
         Returns the total number of intersections for an even regular n-sided polygon.
         Formula from https://www.math.uwaterloo.ca/~mrubinst/publications/ngon.pdf
+
+        Raises:
+            AssertionError: The number of generated points does not equal the expected
+                theoretical number of points.
         """
 
         def is_multiple(x: int, y: int) -> bool:
@@ -427,13 +435,11 @@ class PolygonSolver:
             - 96 * n * d(n, 210)
         )
 
-        try:
-            assert self.n + interior == len(self.point_ls)
-            print(f"n = {n}, total number of points = {len(self.point_ls)}")
-        except AssertionError:
+        print(f"n = {n}, total number of points = {len(self.point_ls)}")
+        if self.n + interior != len(self.point_ls):
             diff = len(self.point_ls) - int(self.n) - int(interior)
             raise AssertionError(
-                f"Theoretical number of points ({int(self.n)} + {int(interior)} = {int(self.n + interior)}) not equal to calculated number of points ({len(self.point_ls)}). Difference of {diff}."
+                f"Expected {int(self.n + interior)} points, got {len(self.point_ls)} points. Difference of {diff}."
             )
 
     def solve(self) -> int:
@@ -454,13 +460,38 @@ class PolygonSolver:
             item.value(self)
         return iterable[-1].value(self)
 
+    def save_result(self, value, filename: str) -> None:
+        """
+        Saves the obtained result to disk.
+        Raises an exception if the current results file has a different value.
+        """
+        # Read file
+        with open(filename, "r") as f:
+            results: dict[str, int] = json.load(f)
+
+        # Check that the entry is the same
+        s = str(self.n)
+        extracted_result = results.get(s)
+        if extracted_result is None:
+            results[s] = value
+            with open(filename, "w") as f:
+                json.dump(results, f)
+            print(f"Added entry for n={self.n} to {filename}.")
+
+        if extracted_result != value:
+            raise AssertionError(
+                f"The calculated value for n={self.n} does not equal the existing value!"
+            )
+        else:
+            print("Calculated result matches existing result.")
+
 
 @fn_timer
 def main():
-    solver = PolygonSolver(n=4, plot=True, figsize=20, values=False)
-    solver.check_intersections()
+    solver = PolygonSolver(n=6, plot=True, figsize=20, values=False)
     final = solver.progressive_solve()
     print(final)
+    solver.save_result(final, "results.json")
     return solver, final
 
 
