@@ -6,6 +6,7 @@ import time
 from decimal import *
 from functools import cached_property, lru_cache, wraps
 from math import comb, pi, sqrt
+from typing import Optional
 
 from matplotlib import pyplot as plt
 from tqdm.auto import tqdm
@@ -47,7 +48,7 @@ class Point:
     @classmethod
     def from_intersection(
         cls, L1: "LineSegment" = None, L2: "LineSegment" = None
-    ) -> "Point":
+    ) -> Optional["Point"]:
         """
         Alternate constructor for Point via intersection of two LineSegments.
         """
@@ -81,58 +82,7 @@ class Point:
         Returns:
             set[LineSegment]: Adjacent edges to the node in the graph.
         """
-        return polygon_solver.point_ls[self]
-
-    @lru_cache(maxsize=None)
-    def dependent_edges(self, polygon_solver: "PolygonSolver") -> set["LineSegment"]:
-        """
-        Provides the edges that we depend on to calculate self.value.
-        These are the edges that are directed towards the self node.
-
-        Returns:
-            set[LineSegment]: Edges that we depend on to calculate self.value
-        """
-        return set(
-            edge
-            for edge in self.connecting_edges(polygon_solver)
-            if edge.direction(self)
-        )
-
-    @lru_cache(maxsize=None)
-    def value(self, polygon_solver: "PolygonSolver") -> int:
-        """
-        Recursively calculates the number of paths we can take from the start node to this node by summing over
-            the nodes of dependent edges.
-
-        Args:
-            polygon_solver (PolygonSolver): PolygonSolver instance
-
-        Returns:
-            int: Number of paths we can take from the start node to this node
-        """
-        if not self.dependent_edges(polygon_solver):
-            return 1
-        return sum(
-            edge.other_end(self).value(polygon_solver)
-            for edge in self.dependent_edges(polygon_solver)
-        )
-
-    def show_dependencies(self, polygon_solver, n: int) -> list["Point"]:
-        """
-        Returns the n-th level of dependent nodes in the graph.
-        Primary tool used in debugging RecursionError where nodes have cyclical dependence.
-
-        Returns:
-            list[Point]: list of Point nodes at the n-th level of dependence
-        """
-        current = set([self])
-        for _ in range(n):
-            current = set(
-                edge.other_end(point)
-                for point in current
-                for edge in point.dependent_edges(polygon_solver)
-            )
-        return sorted(list(current), key=operator.attrgetter("x", "y"))
+        return polygon_solver.adjacency_list[self]
 
     def __eq__(self, other) -> bool:
         if isinstance(other, Point):
@@ -246,8 +196,8 @@ class PolygonSolver:
         self.polygon = self.create_regular_polygon(n)
 
         self.line_segments = None
-        self.point_ls = None
-        self.create_line_segments()
+        self.adjacency_list = None
+        self.create_adjacency_list()
 
         if plot:
             self.plot_graph(**kwargs)
@@ -318,36 +268,37 @@ class PolygonSolver:
 
         return line_to_points
 
-    def create_line_segments(self) -> None:
+    def create_adjacency_list(self) -> None:
         """
-        Creates all the smaller line segments that make up the edges of the graph.
+        Creates the adjacency list of the graph by:
+        1. Creating all the smaller line segments that make up the edges of the graph
+        2. Adding the points to the adjacency list
         """
+        print("Creating adjacency list...")
+
         line_segments = set()
-        point_ls = dict()
+        adjacency_list = dict()
 
-        print("Creating line segments...")
-
-        for ls, p in tqdm(self.line_to_points.items()):
-            if len(p) == 2:
-                line_segments.add(ls)
-                continue
+        for _, points in tqdm(self.line_to_points.items()):
+            for point in points:
+                if point not in adjacency_list:
+                    adjacency_list[point] = set()
 
             sorted_points = sorted(
-                [item.reduced_precision() for item in p],
+                [item.reduced_precision() for item in points],
                 key=operator.attrgetter("x", "y"),
             )
 
             for previous, current in zip(sorted_points, sorted_points[1:]):
                 edge = LineSegment(previous, current)
                 line_segments.add(edge)
-                for item in (previous, current):
-                    if item not in point_ls:
-                        point_ls[item] = set([edge])
-                    else:
-                        point_ls[item].add(edge)
+                if edge.direction():
+                    adjacency_list[previous].add(current)
+                else:
+                    adjacency_list[current].add(previous)
 
         self.line_segments = line_segments
-        self.point_ls = point_ls
+        self.adjacency_list = adjacency_list
 
         # Checks that the generated number of interior points are correct
         self.check_intersections()
@@ -363,8 +314,8 @@ class PolygonSolver:
         head_width: float = 0.03,
     ) -> None:
         x, y = (
-            [point.x for point in self.point_ls],
-            [point.y for point in self.point_ls],
+            [point.x for point in self.adjacency_list],
+            [point.y for point in self.adjacency_list],
         )
 
         # Configurations
@@ -400,7 +351,7 @@ class PolygonSolver:
 
         # Values
         if values:
-            for pt in self.point_ls:
+            for pt in self.adjacency_list:
                 plt.annotate(pt.value(self), (pt.x + offset, pt.y + offset))
 
     def check_intersections(self) -> None:
@@ -435,30 +386,21 @@ class PolygonSolver:
             - 96 * n * d(n, 210)
         )
 
-        print(f"n = {n}, total number of points = {len(self.point_ls)}")
-        if self.n + interior != len(self.point_ls):
-            diff = len(self.point_ls) - int(self.n) - int(interior)
+        print(f"n = {n}, total number of points = {len(self.adjacency_list)}")
+        if self.n + interior != len(self.adjacency_list):
+            diff = len(self.adjacency_list) - int(self.n) - int(interior)
             raise AssertionError(
-                f"Expected {int(self.n + interior)} points, got {len(self.point_ls)} points. Difference of {diff}."
+                f"Expected {int(self.n + interior)} points, got {len(self.adjacency_list)} points. Difference of {diff}."
             )
 
     def solve(self) -> int:
-        return sorted(self.point_ls.keys(), key=operator.attrgetter("x", "y"))[0].value(
-            self
-        )
-
-    def progressive_solve(self) -> int:
         """
-        Intended as an alternative solver that allows us to progressively solve the graph.
-        Allows us to see a progress bar with a marginal performance hit compared to PolygonSolver.solve().
+        Solves the polygons problem progressively (via bottom-up dynamic programming) by:
+        1. Topologically sorting the nodes in the graph
+        2. Calculating the value of nodes by looking up previously calculated values
         """
-        iterable = sorted(
-            self.point_ls.keys(), key=operator.attrgetter("x", "y"), reverse=True
-        )
         print("Solving progressively...")
-        for item in tqdm(iterable, total=len(iterable)):
-            item.value(self)
-        return iterable[-1].value(self)
+        pass
 
     def save_result(self, value, filename: str) -> None:
         """
@@ -488,12 +430,12 @@ class PolygonSolver:
 
 @fn_timer
 def main():
-    solver = PolygonSolver(n=6, plot=True, figsize=20, values=False)
-    final = solver.progressive_solve()
-    print(final)
-    solver.save_result(final, "results.json")
-    return solver, final
+    solver = PolygonSolver(n=4, plot=True, figsize=20, values=False)
+    # final = solver.progressive_solve()
+    # print(final)
+    # solver.save_result(final, "results.json")
+    return solver
 
 
 if __name__ == "__main__":
-    solver, final = main()
+    solver = main()
