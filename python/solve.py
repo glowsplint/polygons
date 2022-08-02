@@ -14,7 +14,7 @@ from tqdm.auto import tqdm
 from decimal_math import cos, sin
 
 TOLERANCE = Decimal(1e-10)
-PRECISION = 13
+PRECISION = 10
 
 ZERO = Decimal(0)
 END = (Decimal(-1), ZERO)
@@ -63,8 +63,8 @@ class Point:
     """
 
     def __init__(self, x: Decimal, y: Decimal, precision=PRECISION):
-        self.x: Decimal = round(zeroise(Decimal(x)), precision)
-        self.y: Decimal = round(zeroise(Decimal(y)), precision)
+        self.x: Decimal = round(zeroise(x), precision)
+        self.y: Decimal = round(zeroise(y), precision)
 
     @classmethod
     def from_intersection(
@@ -104,9 +104,12 @@ class Point:
         return pt.reduced_precision()
 
     def reduced_precision(self, precision=PRECISION) -> "Point":
-        x = round(zeroise(Decimal(self.x)), precision)
-        y = round(zeroise(Decimal(self.y)), precision)
+        x = round(zeroise(self.x), precision)
+        y = round(zeroise(self.y), precision)
         return Point(x, y)
+
+    def value(self, polygon_solver: "PolygonSolver") -> int:
+        return polygon_solver.dp[self]
 
     def __eq__(self, other) -> bool:
         if isinstance(other, Point):
@@ -216,11 +219,12 @@ class PolygonSolver:
         self.n = n
         self.polygon = self.create_regular_polygon(n)
         self.line_segments, self.adjacency_list, self.indegrees = self.create_graph()
+        self.dp = self.solve()
 
         if plot:
             self.plot_graph(**kwargs)
 
-    def find_next_coordinate(self, xy: tuple[Decimal, Decimal], t: Decimal) -> "Point":
+    def find_next_coordinate(self, xy: tuple[Decimal, Decimal], t: Decimal) -> Point:
         """
         Used in polygon creation in cls.create_regular_polygon().
 
@@ -334,12 +338,61 @@ class PolygonSolver:
         self.check_intersections(adjacency_list)
         return line_segments, adjacency_list, indegrees
 
+    def get_topological_ordering(self) -> list[Point]:
+        """
+        Returns the topological ordering of the graph.
+
+        Returns:
+            list[Point]: List of Points in the graph sorted topologically, starting
+                with the start point at (1,0) which has zero indegrees.
+        """
+        print("Getting topological order...")
+        queue = deque([Point(*START)])
+        order: list[Point] = []
+        adjacency_list = self.adjacency_list.copy()
+        indegrees = self.indegrees.copy()
+
+        while queue:
+            n = queue.popleft()
+
+            for nb in adjacency_list[n]:
+                indegrees[nb] -= 1
+                if indegrees[nb] == 0:
+                    queue.append(nb)
+
+            del adjacency_list[n]
+            order.append(n)
+
+        print("Topological ordering complete.")
+        return order
+
+    def solve(self) -> dict[Point, int]:
+        """
+        Solves the polygons problem progressively (via bottom-up dynamic programming) by:
+        1. Topologically sorting the nodes in the graph
+        2. Calculating the value of nodes by looking up previously calculated values
+        """
+
+        dp = {node: 0 for node in self.adjacency_list}
+        dp[Point(*START)] = 1
+        order = self.get_topological_ordering()
+
+        print("Summing over the graph...")
+
+        for node in tqdm(order):
+            for nb in self.adjacency_list[node]:
+                dp[nb] += dp[node]
+        return dp
+
+    def result(self) -> int:
+        return self.dp[Point(*END)]
+
     def plot_graph(
         self,
         figsize: int = 8,
-        lines: bool = True,
-        points: bool = True,
-        values: bool = True,
+        show_lines: bool = True,
+        show_points: bool = True,
+        show_values: bool = True,
         point_size: float = 1,
         head_width: float = 0.03,
     ) -> None:
@@ -359,7 +412,7 @@ class PolygonSolver:
         ax.grid(axis="both", alpha=0.2)
 
         # Lines
-        if lines:
+        if show_lines:
             for line in self.line_segments:
                 color = next(
                     ax._get_lines.prop_cycler  # pylint: disable=protected-access
@@ -378,11 +431,11 @@ class PolygonSolver:
                 )
 
         # Points
-        if points:
+        if show_points:
             ax.scatter(x, y, c="black", s=point_size)
 
         # Values
-        if values:
+        if show_values:
             for pt in self.adjacency_list:
                 plt.annotate(pt.value(self), (pt.x + offset, pt.y + offset))
 
@@ -395,6 +448,7 @@ class PolygonSolver:
             AssertionError: The number of generated points does not equal the expected
                 theoretical number of points.
         """
+        print("Checking number of intersection points...")
 
         def is_multiple(x: int, y: int) -> bool:
             return x % y == 0
@@ -425,43 +479,6 @@ class PolygonSolver:
                 f"Expected {int(self.n + interior)} points, got {len(adjacency_list)} points. Difference of {diff}."
             )
 
-    def solve(self) -> int:
-        """
-        Solves the polygons problem progressively (via bottom-up dynamic programming) by:
-        1. Topologically sorting the nodes in the graph
-        2. Calculating the value of nodes by looking up previously calculated values
-        """
-        print("Solving progressively...")
-
-        dp = [1 for _ in self.adjacency_list]
-        order = self.get_topological_ordering()
-        return 0
-
-    def get_topological_ordering(self) -> list[Point]:
-        """
-        Returns the topological ordering of the graph.
-
-        Returns:
-            list[Point]: List of Points in the graph sorted topologically, starting
-                with the start point at (1,0) which has zero indegrees.
-        """
-        print("Getting topological order...")
-        queue = deque([Point(*START)])
-        order: list[Point] = []
-
-        while queue:
-            n = queue.popleft()
-
-            for nb in self.adjacency_list[n]:
-                self.indegrees[nb] -= 1
-                if self.indegrees[nb] == 0:
-                    queue.append(nb)
-
-            del self.adjacency_list[n]
-            order.append(n)
-
-        return order
-
     def save_result(self, value, filename: str) -> None:
         """
         Saves the obtained result to disk.
@@ -484,16 +501,13 @@ class PolygonSolver:
             raise AssertionError(
                 f"The calculated value for n={self.n} does not equal the existing value!"
             )
-        else:
-            print("Calculated result matches existing result.")
+        print("Calculated result matches existing result.")
 
 
 @fn_timer
-def main():
-    polygon_solver = PolygonSolver(n=6, plot=True, figsize=20, values=False)
-    # final = solver.solve()
-    # print(final)
-    # solver.save_result(final, "results.json")
+def main() -> PolygonSolver:
+    polygon_solver = PolygonSolver(n=10, plot=True, figsize=20, show_values=False)
+    print(polygon_solver.result())
     return polygon_solver
 
 
