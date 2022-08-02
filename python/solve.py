@@ -1,12 +1,11 @@
 import itertools
 import json
 import operator
-import sys
 import time
-from decimal import *
-from functools import cached_property, lru_cache, wraps
+from decimal import *  # pylint: disable=wildcard-import
+from functools import cached_property, wraps
 from math import comb, pi, sqrt
-from typing import Optional
+from typing import Callable, Optional
 
 from matplotlib import pyplot as plt
 from tqdm.auto import tqdm
@@ -16,73 +15,96 @@ from decimal_math import cos, sin
 TOLERANCE = Decimal(1e-10)
 PRECISION = 13
 
-END = (-1, 0)
-START = (1, 0)
+ZERO = Decimal(0)
+END = (Decimal(-1), ZERO)
+START = (Decimal(1), ZERO)
 
-sys.setrecursionlimit(30000)
 
+def fn_timer(fn: Callable) -> Callable:
+    """
+    Decorates a function to display running time.
 
-def fn_timer(function):
-    @wraps(function)
+    Args:
+        fn (function): _description_
+
+    Returns:
+        Callable: Decorated function
+    """
+
+    @wraps(fn)
     def function_timer(*args, **kwargs):
-        t0 = time.time()
-        result = function(*args, **kwargs)
-        t1 = time.time()
-        print(f"Total time running {function.__name__}: {(t1 - t0):.2f} seconds.")
+        start = time.time()
+        result = fn(*args, **kwargs)
+        end = time.time()
+        print(f"Total time running {fn.__name__}: {(end - start):.2f} seconds.")
         return result
 
     return function_timer
 
 
-def zeroise(a: float or None) -> bool:
-    if a is None:
-        return None
-    return a if abs(a) > TOLERANCE else 0
+def zeroise(val: Decimal) -> Decimal:
+    """
+    Returns zero if the absolute value is smaller a given tolerance.
+    Otherwise returns the value itself.
+
+    Args:
+        val (Optional[float]): _description_
+
+    Returns:
+        Optional[float]: _description_
+    """
+    return val if abs(val) > TOLERANCE else ZERO
 
 
 class Point:
-    def __init__(self, x: float, y: float, precision=PRECISION):
-        self.x = round(zeroise(Decimal(x)), precision)
-        self.y = round(zeroise(Decimal(y)), precision)
+    """
+    Point class that contains the coordinates of a given point.
+    """
+
+    def __init__(self, x: Decimal, y: Decimal, precision=PRECISION):
+        self.x: Decimal = round(zeroise(Decimal(x)), precision)
+        self.y: Decimal = round(zeroise(Decimal(y)), precision)
 
     @classmethod
     def from_intersection(
-        cls, L1: "LineSegment" = None, L2: "LineSegment" = None
+        cls, line_a: "LineSegment", line_b: "LineSegment"
     ) -> Optional["Point"]:
         """
         Alternate constructor for Point via intersection of two LineSegments.
         """
-        a1, b1, c1 = (L1.p2.x - L1.p1.x), (L2.p1.x - L2.p2.x), (L2.p1.x - L1.p1.x)
-        a2, b2, c2 = (L1.p2.y - L1.p1.y), (L2.p1.y - L2.p2.y), (L2.p1.y - L1.p1.y)
+        a1, b1, c1 = (
+            (line_a.p2.x - line_a.p1.x),
+            (line_b.p1.x - line_b.p2.x),
+            (line_b.p1.x - line_a.p1.x),
+        )
+        a2, b2, c2 = (
+            (line_a.p2.y - line_a.p1.y),
+            (line_b.p1.y - line_b.p2.y),
+            (line_b.p1.y - line_a.p1.y),
+        )
 
-        D = a1 * b2 - b1 * a2
-        Dx = c1 * b2 - b1 * c2
-        Dy = a1 * c2 - c1 * a2
+        d = a1 * b2 - b1 * a2
+        d_x = c1 * b2 - b1 * c2
+        d_y = a1 * c2 - c1 * a2
 
-        if D != 0:
-            s = Dx / D
-            t = Dy / D
+        if d != 0:
+            s = d_x / d
+            t = d_y / d
 
             if not (0 <= s <= 1 and 0 <= t <= 1):
                 return None
         else:
             return None
 
-        return cls((1 - s) * L1.p1.x + s * L1.p2.x, (1 - s) * L1.p1.y + s * L1.p2.y)
+        return cls(
+            (1 - s) * line_a.p1.x + s * line_a.p2.x,
+            (1 - s) * line_a.p1.y + s * line_a.p2.y,
+        )
 
     def reduced_precision(self, precision=PRECISION) -> "Point":
         x = round(zeroise(Decimal(self.x)), precision)
         y = round(zeroise(Decimal(self.y)), precision)
         return Point(x, y)
-
-    def connecting_edges(self, polygon_solver: "PolygonSolver") -> set["LineSegment"]:
-        """
-        Provides the adjacent edges to the node in the graph.
-
-        Returns:
-            set[LineSegment]: Adjacent edges to the node in the graph.
-        """
-        return polygon_solver.adjacency_list[self]
 
     def __eq__(self, other) -> bool:
         if isinstance(other, Point):
@@ -104,7 +126,7 @@ class LineSegment:
         self.p1, self.p2 = sorted([p1, p2], key=operator.attrgetter("x", "y"))
 
     @property
-    def L2(self) -> float:
+    def l2(self) -> float:
         return sqrt((self.p1.x - self.p2.x) ** 2 + (self.p1.y - self.p2.y) ** 2)
 
     @property
@@ -113,20 +135,23 @@ class LineSegment:
 
     def direction(self, pt: "Point" = None) -> bool:
         """
-        Provides the direction of the edge in the graph, by comparing the L2 distances (p1-to-end, p2-to-end).
+        Provides the direction of the edge in the graph, by comparing the L2 distances
+        (p1-to-end, p2-to-end).
 
-        Caution: This method must only be used when there are no intersection points between self.p1 and self.p2.
-            Otherwise, it does not return a useful directional label.
+        Caution: This method must only be used when there are no intersection points
+            between self.p1 and self.p2. Otherwise, it does not return a useful directional
+            label.
 
         Args:
             pt (Point, optional): True if the direction is pointing towards <pt>.
-                                  <pt> should be one of the ends of the line segment. Defaults to None.
+                                  <pt> should be one of the ends of the line segment.
+                                  Defaults to None.
 
         Returns:
             bool: True if p1-to-p2; False if p2-to-p1.
         """
         direction = (
-            LineSegment(self.p1, Point(*END)).L2 > LineSegment(self.p2, Point(*END)).L2
+            LineSegment(self.p1, Point(*END)).l2 > LineSegment(self.p2, Point(*END)).l2
         )
 
         if pt:
@@ -138,7 +163,8 @@ class LineSegment:
         Creates a tuple used in the visualisation of the direction of an edge.
 
         Returns:
-            tuple[Decimal, Decimal]: A tuple with small values that mathematically represent the direction of the edge.
+            tuple[Decimal, Decimal]: A tuple with small values that mathematically represent
+                the direction of the edge.
         """
         p1, p2 = self.p1, self.p2
         multiplier = 1 if self.direction() else -1
@@ -154,21 +180,13 @@ class LineSegment:
 
         try:
             return (
-                multiplier * x_coeff * delta,
-                multiplier * y_coeff * delta * abs((p2.y - p1.y) / (p2.x - p1.x)),
+                Decimal(multiplier * x_coeff) * delta,
+                Decimal(multiplier * y_coeff)
+                * delta
+                * abs((p2.y - p1.y) / (p2.x - p1.x)),
             )
         except (DivisionByZero, InvalidOperation):
-            return (0, multiplier * delta)
-
-    def other_end(self, p: "Point") -> "Point":
-        """
-        Returns:
-            Point: Other end of the line segment
-        """
-        if p == self.p1:
-            return self.p2
-        elif p == self.p2:
-            return self.p1
+            return (ZERO, multiplier * delta)
 
     def __eq__(self, other) -> bool:
         if isinstance(other, LineSegment):
@@ -190,19 +208,18 @@ class PolygonSolver:
         Args:
             n (int): Number of sides of the regular polygon
             plot (bool, optional): Plots the graph if true. Defaults to False.
-            **kwargs (optional): Passes any other keyword arguments to self.plot_polygon_graph() for convenience.
+            **kwargs (optional): Passes any other keyword arguments to self.plot_polygon_graph()
+                for convenience.
         """
         self.n = n
         self.polygon = self.create_regular_polygon(n)
-
-        self.line_segments = None
-        self.adjacency_list = None
-        self.create_adjacency_list()
+        self.line_segments: set[LineSegment] = set()
+        self.adjacency_list: dict[Point, set[Point]] = dict()
+        self.create_graph()
 
         if plot:
             self.plot_graph(**kwargs)
 
-    @classmethod
     def find_next_coordinate(self, xy: tuple[Decimal, Decimal], t: Decimal) -> "Point":
         """
         Used in polygon creation in cls.create_regular_polygon().
@@ -217,8 +234,7 @@ class PolygonSolver:
         x, y = xy
         return Point(x * cos(t) - y * sin(t), x * sin(t) + y * cos(t), 25)
 
-    @classmethod
-    def create_regular_polygon(self, n: int) -> list[tuple]:
+    def create_regular_polygon(self, n: int) -> list[Point]:
         """
         Defines a regular polygon from its vertices.
 
@@ -226,7 +242,7 @@ class PolygonSolver:
             n (int): Number of sides of the regular polygon
 
         Returns:
-            list[tuple]: Contains the Point classes of the polygon vertices
+            list[Point]: Contains the Point classes of the polygon vertices
         """
         theta = Decimal(2 / n * pi)
         polygon = []
@@ -268,7 +284,7 @@ class PolygonSolver:
 
         return line_to_points
 
-    def create_adjacency_list(self) -> None:
+    def create_graph(self) -> tuple[set[LineSegment], dict[Point, set[Point]]]:
         """
         Creates the adjacency list of the graph by:
         1. Creating all the smaller line segments that make up the edges of the graph
@@ -276,8 +292,8 @@ class PolygonSolver:
         """
         print("Creating adjacency list...")
 
-        line_segments = set()
-        adjacency_list = dict()
+        line_segments: set[LineSegment] = set()
+        adjacency_list: dict[Point, set[Point]] = {}
 
         for _, points in tqdm(self.line_to_points.items()):
             for point in points:
@@ -297,12 +313,10 @@ class PolygonSolver:
                 else:
                     adjacency_list[current].add(previous)
 
-        self.line_segments = line_segments
-        self.adjacency_list = adjacency_list
-
         # Checks that the generated number of interior points are correct
         self.check_intersections()
-        return None
+
+        return line_segments, adjacency_list
 
     def plot_graph(
         self,
@@ -320,7 +334,7 @@ class PolygonSolver:
 
         # Configurations
         limit = 1.1
-        offset = -0.07
+        offset = Decimal(-0.07)
 
         _, ax = plt.subplots(figsize=(figsize, figsize))
         ax.set_xlim(-limit, limit)
@@ -331,7 +345,9 @@ class PolygonSolver:
         # Lines
         if lines:
             for line in self.line_segments:
-                color = next(ax._get_lines.prop_cycler)["color"]
+                color = next(
+                    ax._get_lines.prop_cycler  # pylint: disable=protected-access
+                )["color"]
                 ax.plot([line.p1.x, line.p2.x], [line.p1.y, line.p2.y], color=color)
                 gradient = line.gradient()
                 plt.arrow(
@@ -400,7 +416,6 @@ class PolygonSolver:
         2. Calculating the value of nodes by looking up previously calculated values
         """
         print("Solving progressively...")
-        pass
 
     def save_result(self, value, filename: str) -> None:
         """
@@ -408,7 +423,7 @@ class PolygonSolver:
         Raises an exception if the current results file has a different value.
         """
         # Read file
-        with open(filename, "r") as f:
+        with open(filename, "r", encoding="utf-8") as f:
             results: dict[str, int] = json.load(f)
 
         # Check that the entry is the same
@@ -416,7 +431,7 @@ class PolygonSolver:
         extracted_result = results.get(s)
         if extracted_result is None:
             results[s] = value
-            with open(filename, "w") as f:
+            with open(filename, "w", encoding="utf-8") as f:
                 json.dump(results, f)
             print(f"Added entry for n={self.n} to {filename}.")
 
@@ -430,11 +445,11 @@ class PolygonSolver:
 
 @fn_timer
 def main():
-    solver = PolygonSolver(n=4, plot=True, figsize=20, values=False)
-    # final = solver.progressive_solve()
+    polygon_solver = PolygonSolver(n=4, plot=True, figsize=20, values=False)
+    # final = solver.solve()
     # print(final)
     # solver.save_result(final, "results.json")
-    return solver
+    return polygon_solver
 
 
 if __name__ == "__main__":
