@@ -1,7 +1,7 @@
 {
     "_meta": {
         "hash": {
-            "sha256": "5f95b9eab4f7add70347d83a7f2ec06d29a5e66b19a910c6abeeeb820a2f4a95"
+            "sha256": "7799da8f3dcdd8198249f7c11aa8ddffa1d5b46092b3ce98a3c33703f2f4a566"
         },
         "pipfile-spec": 6,
         "requires": {
@@ -562,6 +562,13 @@
                 "sha256:2d82818f5bb3e369420cb3c4060a7970edba416647068eb4c5343488a6c604a8"
             ],
             "version": "==0.4.3"
+        },
+        "nb-black": {
+            "hashes": [
+                "sha256:1ca52e3a46675f6a0a6d79ac73a1f8f951bef60f919eced56173e76ab1b6d62b"
+            ],
+            "index": "pypi",
+            "version": "==1.0.7"
         },
         "nest-asyncio": {
             "hashes": [

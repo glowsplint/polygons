@@ -222,6 +222,8 @@ class PolygonSolver:
         self.dp = self.solve()
 
         if plot:
+            if n > 30:
+                UserWarning("Plotting for values of n > 30 can be extremely slow.")
             self.plot_graph(**kwargs)
 
     def find_next_coordinate(self, xy: tuple[Decimal, Decimal], t: Decimal) -> Point:
@@ -301,7 +303,7 @@ class PolygonSolver:
         1. Creating all the smaller line segments that make up the edges of the graph
         2. Adding the points to the adjacency list
         """
-        print("Creating graph...")
+        print(f"Creating graph for n={self.n}...")
 
         line_segments: set[LineSegment] = set()
         adjacency_list: dict[Point, set[Point]] = {}
@@ -479,25 +481,28 @@ class PolygonSolver:
                 f"Expected {int(self.n + interior)} points, got {len(adjacency_list)} points. Difference of {diff}."
             )
 
-    def save_result(self, value, filename: str) -> None:
+    def save_result(self, result: int, filename: str) -> None:
         """
         Saves the obtained result to disk.
         Raises an exception if the current results file has a different value.
         """
         # Read file
-        with open(filename, "r", encoding="utf-8") as f:
-            results: dict[str, int] = json.load(f)
+        try:
+            with open(filename, "r", encoding="utf-8") as f:
+                results: dict[str, int] = json.load(f)
+        except FileNotFoundError:
+            print("Existing results file not found.")
+            results = {}
 
         # Check that the entry is the same
         s = str(self.n)
         extracted_result = results.get(s)
         if extracted_result is None:
-            results[s] = value
+            results[s] = result
             with open(filename, "w", encoding="utf-8") as f:
                 json.dump(results, f)
             print(f"Added entry for n={self.n} to {filename}.")
-
-        if extracted_result != value:
+        elif extracted_result != result:
             raise AssertionError(
                 f"The calculated value for n={self.n} does not equal the existing value!"
             )
@@ -505,11 +510,13 @@ class PolygonSolver:
 
 
 @fn_timer
-def main() -> PolygonSolver:
-    polygon_solver = PolygonSolver(n=10, plot=True, figsize=20, show_values=False)
-    print(polygon_solver.result())
+def main(n: int) -> PolygonSolver:
+    polygon_solver = PolygonSolver(n=n, plot=False, figsize=20, show_values=False)
+    result = polygon_solver.result()
+    polygon_solver.save_result(result, "results.json")
     return polygon_solver
 
 
 if __name__ == "__main__":
-    solver = main()
+    for i in range(98, 122, 2):
+        main(i)
