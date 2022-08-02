@@ -2,6 +2,7 @@ import itertools
 import json
 import operator
 import time
+from collections import deque
 from decimal import *  # pylint: disable=wildcard-import
 from functools import cached_property, wraps
 from math import comb, pi, sqrt
@@ -96,10 +97,11 @@ class Point:
         else:
             return None
 
-        return cls(
+        pt = cls(
             (1 - s) * line_a.p1.x + s * line_a.p2.x,
             (1 - s) * line_a.p1.y + s * line_a.p2.y,
         )
+        return pt.reduced_precision()
 
     def reduced_precision(self, precision=PRECISION) -> "Point":
         x = round(zeroise(Decimal(self.x)), precision)
@@ -122,7 +124,7 @@ class LineSegment:
 
     __slots__ = ["p1", "p2"]
 
-    def __init__(self, p1: "Point", p2: "Point"):
+    def __init__(self, p1: Point, p2: Point):
         self.p1, self.p2 = sorted([p1, p2], key=operator.attrgetter("x", "y"))
 
     @property
@@ -130,10 +132,10 @@ class LineSegment:
         return sqrt((self.p1.x - self.p2.x) ** 2 + (self.p1.y - self.p2.y) ** 2)
 
     @property
-    def mid(self) -> "Point":
+    def mid(self) -> Point:
         return Point((self.p1.x + self.p2.x) / 2, (self.p1.y + self.p2.y) / 2)
 
-    def direction(self, pt: "Point" = None) -> bool:
+    def direction(self, pt: Point = None) -> bool:
         """
         Provides the direction of the edge in the graph, by comparing the L2 distances
         (p1-to-end, p2-to-end).
@@ -213,9 +215,7 @@ class PolygonSolver:
         """
         self.n = n
         self.polygon = self.create_regular_polygon(n)
-        self.line_segments: set[LineSegment] = set()
-        self.adjacency_list: dict[Point, set[Point]] = dict()
-        self.create_graph()
+        self.line_segments, self.adjacency_list, self.indegrees = self.create_graph()
 
         if plot:
             self.plot_graph(**kwargs)
@@ -257,12 +257,15 @@ class PolygonSolver:
     @cached_property
     def lines(self) -> list[LineSegment]:
         """
-        Returns the list of all basic line segments between polygon vertices.
+        Returns the list of all basic (unbroken) line segments between polygon vertices.
+
+        Returns:
+            list[LineSegment]: Contains basic (unbroken) line segments
         """
         return [LineSegment(a, b) for a, b in itertools.combinations(self.polygon, 2)]
 
     @cached_property
-    def line_to_points(self) -> dict[LineSegment, set[Point]]:
+    def line_segments_with_points(self) -> dict[LineSegment, set[Point]]:
         """
         Returns the mapping of unbroken line segments to all points on the respective line segment.
 
@@ -271,52 +274,65 @@ class PolygonSolver:
                 Keys: All line segments in the graph
                 Values: Every point on a given line segment
         """
-        line_to_points = dict()
+        result: dict[LineSegment, set[Point]] = {}
         for line in self.lines:
-            line_to_points[line] = set([line.p1, line.p2])
+            result[line] = set(
+                [line.p1.reduced_precision(), line.p2.reduced_precision()]
+            )
 
         for a, b in itertools.combinations(self.lines, 2):
             point = Point.from_intersection(a, b)
 
             if point is not None:
-                line_to_points[a].add(point)
-                line_to_points[b].add(point)
+                result[a].add(point)
+                result[b].add(point)
 
-        return line_to_points
+        return result
 
-    def create_graph(self) -> tuple[set[LineSegment], dict[Point, set[Point]]]:
+    def create_graph(
+        self,
+    ) -> tuple[set[LineSegment], dict[Point, set[Point]], dict[Point, int]]:
         """
         Creates the adjacency list of the graph by:
         1. Creating all the smaller line segments that make up the edges of the graph
         2. Adding the points to the adjacency list
         """
-        print("Creating adjacency list...")
+        print("Creating graph...")
 
         line_segments: set[LineSegment] = set()
         adjacency_list: dict[Point, set[Point]] = {}
+        indegrees: dict[Point, int] = {}
 
-        for _, points in tqdm(self.line_to_points.items()):
+        for _, points in tqdm(self.line_segments_with_points.items()):
+            # Create base adjacency list with all keys
             for point in points:
                 if point not in adjacency_list:
                     adjacency_list[point] = set()
+                    indegrees[point] = 0
 
+            # Sort points by x and y coordinates
             sorted_points = sorted(
                 [item.reduced_precision() for item in points],
                 key=operator.attrgetter("x", "y"),
             )
 
             for previous, current in zip(sorted_points, sorted_points[1:]):
+                # Create line segment for each successive pair of points on the unbroken line segment
                 edge = LineSegment(previous, current)
                 line_segments.add(edge)
+
+                # Standardise first and second
+                first, second = (current, previous)
                 if edge.direction():
-                    adjacency_list[previous].add(current)
-                else:
-                    adjacency_list[current].add(previous)
+                    first, second = second, first
+
+                # Add to adjacency list and increment value of indegrees
+                adjacency_list[first].add(second)
+                indegrees[second] += 1
 
         # Checks that the generated number of interior points are correct
-        self.check_intersections()
-
-        return line_segments, adjacency_list
+        self.check_intersections(adjacency_list)
+        return line_segments, adjacency_list, indegrees
 
     def plot_graph(
         self,
@@ -370,7 +386,7 @@ class PolygonSolver:
             for pt in self.adjacency_list:
                 plt.annotate(pt.value(self), (pt.x + offset, pt.y + offset))
 
-    def check_intersections(self) -> None:
+    def check_intersections(self, adjacency_list: dict[Point, set[Point]]) -> None:
         """
         Returns the total number of intersections for an even regular n-sided polygon.
         Formula from https://www.math.uwaterloo.ca/~mrubinst/publications/ngon.pdf
@@ -402,11 +418,11 @@ class PolygonSolver:
             - 96 * n * d(n, 210)
         )
 
-        print(f"n = {n}, total number of points = {len(self.adjacency_list)}")
-        if self.n + interior != len(self.adjacency_list):
-            diff = len(self.adjacency_list) - int(self.n) - int(interior)
+        print(f"n = {n}, total number of points = {len(adjacency_list)}")
+        if self.n + interior != len(adjacency_list):
+            diff = len(adjacency_list) - int(self.n) - int(interior)
             raise AssertionError(
-                f"Expected {int(self.n + interior)} points, got {len(self.adjacency_list)} points. Difference of {diff}."
+                f"Expected {int(self.n + interior)} points, got {len(adjacency_list)} points. Difference of {diff}."
             )
 
     def solve(self) -> int:
@@ -416,6 +432,35 @@ class PolygonSolver:
         2. Calculating the value of nodes by looking up previously calculated values
         """
         print("Solving progressively...")
+
+        dp = [1 for _ in self.adjacency_list]
+        order = self.get_topological_ordering()
+        return 0
+
+    def get_topological_ordering(self) -> list[Point]:
+        """
+        Returns the topological ordering of the graph.
+
+        Returns:
+            list[Point]: List of Points in the graph sorted topologically, starting
+                with the start point at (1,0) which has zero indegrees.
+        """
+        print("Getting topological order...")
+        queue = deque([Point(*START)])
+        order: list[Point] = []
+
+        while queue:
+            n = queue.popleft()
+
+            for nb in self.adjacency_list[n]:
+                self.indegrees[nb] -= 1
+                if self.indegrees[nb] == 0:
+                    queue.append(nb)
+
+            del self.adjacency_list[n]
+            order.append(n)
+
+        return order
 
     def save_result(self, value, filename: str) -> None:
         """
@@ -445,7 +490,7 @@ class PolygonSolver:
 
 @fn_timer
 def main():
-    polygon_solver = PolygonSolver(n=4, plot=True, figsize=20, values=False)
+    polygon_solver = PolygonSolver(n=6, plot=True, figsize=20, values=False)
     # final = solver.solve()
     # print(final)
     # solver.save_result(final, "results.json")
