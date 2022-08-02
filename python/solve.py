@@ -15,6 +15,7 @@ from decimal_math import cos, sin
 
 TOLERANCE = Decimal(1e-10)
 PRECISION = 10
+HIGH_PRECISION = 25
 
 ZERO = Decimal(0)
 END = (Decimal(-1), ZERO)
@@ -217,11 +218,18 @@ class PolygonSolver:
                 for convenience.
         """
         self.n = n
+        self.plot = plot
+
         self.polygon = self.create_regular_polygon(n)
         self.line_segments, self.adjacency_list, self.indegrees = self.create_graph()
+
+        # Checks that the generated number of interior points are correct
+        self.check_intersections(self.adjacency_list)
+
+        # Solve the graph
         self.dp = self.solve()
 
-        if plot:
+        if self.plot:
             if n > 30:
                 UserWarning("Plotting for values of n > 30 can be extremely slow.")
             self.plot_graph(**kwargs)
@@ -238,7 +246,7 @@ class PolygonSolver:
             Point: High precision point
         """
         x, y = xy
-        return Point(x * cos(t) - y * sin(t), x * sin(t) + y * cos(t), 25)
+        return Point(x * cos(t) - y * sin(t), x * sin(t) + y * cos(t), HIGH_PRECISION)
 
     def create_regular_polygon(self, n: int) -> list[Point]:
         """
@@ -283,13 +291,15 @@ class PolygonSolver:
         result: dict[LineSegment, set[Point]] = {}
         for line in self.lines:
             result[line] = set(
-                [line.p1.reduced_precision(), line.p2.reduced_precision()]
+                (line.p1.reduced_precision(), line.p2.reduced_precision())
             )
 
+        # Intersect every two line segments
         for a, b in itertools.combinations(self.lines, 2):
             point = Point.from_intersection(a, b)
 
-            if point is not None:
+            # Line segments may not intersect
+            if point:
                 result[a].add(point)
                 result[b].add(point)
 
@@ -518,5 +528,5 @@ def main(n: int) -> PolygonSolver:
 
 
 if __name__ == "__main__":
-    for i in range(98, 122, 2):
+    for i in range(100, 122, 2):
         main(i)
