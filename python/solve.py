@@ -5,7 +5,7 @@ import time
 from collections import deque
 from decimal import *  # pylint: disable=wildcard-import
 from functools import cached_property, wraps
-from math import comb, pi, sqrt
+from math import comb, pi
 from typing import Callable, Optional
 
 from matplotlib import pyplot as plt
@@ -132,8 +132,8 @@ class LineSegment:
         self.p1, self.p2 = sorted([p1, p2], key=operator.attrgetter("x", "y"))
 
     @property
-    def l2(self) -> float:
-        return sqrt((self.p1.x - self.p2.x) ** 2 + (self.p1.y - self.p2.y) ** 2)
+    def l2(self) -> Decimal:
+        return ((self.p1.x - self.p2.x) ** 2 + (self.p1.y - self.p2.y) ** 2).sqrt()
 
     @property
     def mid(self) -> Point:
@@ -236,10 +236,10 @@ class PolygonSolver:
 
     def find_next_coordinate(self, xy: tuple[Decimal, Decimal], t: Decimal) -> Point:
         """
-        Used in polygon creation in cls.create_regular_polygon().
+        Returns the next clockwise high-precision point from an existing polygon point.
 
         Args:
-            xy (tuple[Decimal, Decimal]): Coordinates(origin vector) of the current point
+            xy (tuple[Decimal, Decimal]): Coordinates (origin vector) of the current point
             t (Decimal): Angle of rotation around the origin
 
         Returns:
@@ -250,7 +250,7 @@ class PolygonSolver:
 
     def create_regular_polygon(self, n: int) -> list[Point]:
         """
-        Defines a regular polygon from its vertices.
+        Returns the vertices of a regular polygon.
 
         Args:
             n (int): Number of sides of the regular polygon
@@ -346,8 +346,6 @@ class PolygonSolver:
                 adjacency_list[first].add(second)
                 indegrees[second] += 1
 
-        # Checks that the generated number of interior points are correct
-        self.check_intersections(adjacency_list)
         return line_segments, adjacency_list, indegrees
 
     def get_topological_ordering(self) -> list[Point]:
@@ -528,5 +526,4 @@ def main(n: int) -> PolygonSolver:
 
 
 if __name__ == "__main__":
-    for i in range(100, 122, 2):
-        main(i)
+    solver = main(60)

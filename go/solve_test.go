@@ -23,6 +23,7 @@ type BasePolygonCase struct {
 		LineSegment [][]float64 `json:"lineSegment"`
 		Points      [][]float64 `json:"points"`
 	} `json:"lineToPoints"`
+	TotalPoints int `json:"totalPoints"`
 }
 
 type PolygonTestCase struct {
@@ -31,6 +32,11 @@ type PolygonTestCase struct {
 	PolygonVertices ByXY
 	LineSegments    []LineSegment
 	LineToPoints    LineToPoints
+	TotalPoints     int
+}
+
+type FixedStringer interface {
+	StringFixed(precision int32) string
 }
 
 var polygonTestCases = GetTestCases()
@@ -73,8 +79,8 @@ func NewFromBaseCase(bpc BasePolygonCase) PolygonTestCase {
 			ltp[ls][point.StringFixed(precision)] = point
 		}
 	}
-	polygonTestCase.LineToPoints = ltp
 
+	polygonTestCase.LineToPoints = ltp
 	return polygonTestCase
 }
 
@@ -223,11 +229,12 @@ func TestMapLineToPoints4(t *testing.T) {
 	for _, testCase := range polygonTestCases {
 		ps := PolygonSolver{testCase.N, precision, tolerance}
 		lineSegments := testCase.LineSegments
-		got := ps.MapLineToPoints(lineSegments)
+		got := ps.MapLineSegmentsToPoints(lineSegments)
 		want := testCase.LineToPoints
 
-		// Deep equal will not work because points contain Decimal which contains pointers
-		if !reflect.DeepEqual(got, want) && ps.n == 4 {
+		// TODO: Deep equal will not work because points contain Decimal which contains pointers
+		// Need to convert them into string and do string comparison
+		if !reflect.DeepEqual(got, want) && ps.N == 4 {
 			t.Errorf("got = %v, \nwant = %v", got, want)
 		}
 	}
@@ -245,3 +252,14 @@ func TestMapLineToPoints4(t *testing.T) {
 // 		}
 // 	}
 // }
+
+func TestGetTheoreticalTotalPoints(t *testing.T) {
+	for _, testCase := range polygonTestCases {
+		ps := PolygonSolver{testCase.N, precision, tolerance}
+		got, want := ps.GetTheoreticalTotalPoints(), testCase.TotalPoints
+
+		if got != want {
+			t.Errorf("got = %v, \nwant = %v", got, want)
+		}
+	}
+}

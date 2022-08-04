@@ -4,40 +4,132 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 
-	dec "github.com/shopspring/decimal"
+	deque "github.com/gammazero/deque"
 	combin "gonum.org/v1/gonum/stat/combin"
 )
 
 // Constants
-var ZERO dec.Decimal = dec.NewFromInt(0)
-var ONE dec.Decimal = dec.NewFromInt(1)
-var TWO dec.Decimal = dec.NewFromInt(2)
-var END Point = Point{ONE.Neg(), ZERO}
-var START Point = Point{ONE, ZERO}
+var END Point = Point{-1, 0}
+var START Point = Point{1, 0}
 
+// Point definition
 type Point struct {
-	X dec.Decimal `json:"x"`
-	Y dec.Decimal `json:"y"`
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
+}
+
+func roundFloat(val float64, precision uint) float64 {
+	ratio := math.Pow(10, float64(precision))
+	return math.Round(val*ratio) / ratio
 }
 
 func (p Point) String() string {
 	return fmt.Sprintf("(%v,%v)", p.X, p.Y)
 }
 
-func (p Point) StringFixed(places int32) string {
-	return fmt.Sprintf("(%v,%v)", p.X.StringFixed(places), p.Y.StringFixed(places))
+func (p Point) StringFixed(places uint) PointString {
+	return PointString(fmt.Sprintf("(%v,%v)", roundFloat(p.X, places), roundFloat(p.Y, places)))
 }
 
-type FixedStringer interface {
-	StringFixed(places int32) string
+func (p Point) ReducedPrecision(precision uint) Point {
+	x := roundFloat(p.X, precision)
+	y := roundFloat(p.Y, precision)
+	return Point{x, y}
 }
 
-type LineToPoints map[LineSegment]map[string]Point
+func NewFromPointString(s string) (Point, error) {
+	// Use regex to capture the first part and second part
+	var pt Point
+	reX := regexp.MustCompile(`\((.*),`)
+	reY := regexp.MustCompile(`,(.*)\)`)
+	x, err := strconv.ParseFloat(reX.FindStringSubmatch(s)[1], 64)
+	if err != nil {
+		return pt, err
+	}
+	y, err := strconv.ParseFloat(reY.FindStringSubmatch(s)[1], 64)
+	if err != nil {
+		return pt, err
+	}
+	return Point{x, y}, nil
+}
 
-// type PointToLines = map[Point]mapset.Set[LineSegment]
-// type AdjacencyList = map[Point]mapset.Set[Point]
+func NewFromIntersection(L1, L2 LineSegment, precision uint, tolerance float64) (Point, error) {
+	// Constructor for Point via the intersection of two line segments
+	a1 := L1.P2.X - L1.P1.X
+	b1 := L2.P1.X - L2.P2.X
+	c1 := L2.P1.X - L1.P1.X
+	a2 := L1.P2.Y - L1.P1.Y
+	b2 := L2.P1.Y - L2.P2.Y
+	c2 := L2.P1.Y - L1.P1.Y
+
+	d := a1*b2 - b1*a2
+	dX := c1*b2 - b1*c2
+	dY := a1*c2 - c1*a2
+
+	var pt Point
+	if !almostEqual(d, 0, tolerance) {
+		s := dX / d
+		t := dY / d
+
+		if !(isInBetween(0, s, 1) && isInBetween(0, t, 1)) {
+			return pt, errors.New("no intersection found")
+		} else {
+			x := (1-s)*L1.P1.X + s*L1.P2.X
+			y := (1-s)*L1.P1.Y + s*L1.P2.Y
+			return Point{x, y}.ReducedPrecision(precision), nil
+		}
+	} else {
+		return pt, errors.New("no intersection found")
+	}
+}
+
+// LineSegment definition
+type LineSegment struct {
+	P1 Point `json:"p1"`
+	P2 Point `json:"p2"`
+}
+
+type LineSegmentString = string
+
+func (ls LineSegment) String() string {
+	return fmt.Sprintf("(%v,%v)", ls.P1.String(), ls.P2.String())
+}
+
+func (ls LineSegment) StringFixed(precision uint) LineSegmentString {
+	return fmt.Sprintf("(%v,%v)", ls.P1.StringFixed(precision), ls.P2.StringFixed(precision))
+}
+
+func (ls LineSegment) L2() float64 {
+	a := math.Pow((ls.P1.X - ls.P2.X), 2)
+	b := math.Pow((ls.P1.Y - ls.P2.Y), 2)
+	return math.Pow(a+b, 0.5)
+}
+
+func (ls LineSegment) Mid() Point {
+	x := (ls.P1.X + ls.P2.X) / 2
+	y := (ls.P1.Y + ls.P2.Y) / 2
+	return Point{x, y}
+}
+
+func (ls *LineSegment) Direction() bool {
+	// Provides the direction of the edge in the graph, by comparing the L2 distances
+	// (p1-to-end, p2-to-end).
+	p1ToEnd := LineSegment{ls.P1, END}.L2()
+	p2ToEnd := LineSegment{ls.P2, END}.L2()
+	direction := p1ToEnd > p2ToEnd
+	return direction
+}
+
+// Types
+type LineToPoints map[LineSegmentString]map[PointString]Point
+type PointString string
+type AdjacencyList map[PointString]map[PointString]bool
+type Indegrees map[PointString]int
 
 // To allow sorting of points
 type ByXY []Point
@@ -51,12 +143,12 @@ func (a ByXY) Swap(i, j int) {
 }
 
 func (a ByXY) Less(i, j int) bool {
-	if a[i].X.LessThan(a[j].X) {
+	if a[i].X < a[j].X {
 		return true
-	} else if a[i].X.GreaterThan(a[j].X) {
+	} else if a[i].X > a[j].X {
 		return false
 	} else {
-		return a[i].Y.LessThan(a[j].Y)
+		return a[i].Y < a[j].Y
 	}
 }
 
@@ -66,101 +158,42 @@ func (a ByXY) String() string {
 		result := fmt.Sprintf("%v", p)
 		results = append(results, result)
 	}
+	return strings.Join(results, ",")
+}
+
+func (s PointString) String() string {
+	return fmt.Sprintf("%v", string(s))
+}
+
+func (a AdjacencyList) String() string {
+	// Prints only keys
+	// Convert PointString to Point, sorts and displays
+	sortedPoints := make(ByXY, 0)
+	for k := range a {
+		p, err := NewFromPointString(k.String())
+		if err != nil {
+			panic(err)
+		}
+		sortedPoints = append(sortedPoints, p)
+	}
+	sort.Stable(sortedPoints)
+	results := []string{}
+	for _, v := range sortedPoints {
+		result := fmt.Sprintf("%v", v)
+		results = append(results, result)
+	}
 	return strings.Join(results, "\n")
 }
 
-func almostEqual(a, b, tolerance dec.Decimal) bool {
-	return a.Sub(b).Abs().LessThan(tolerance)
+func almostEqual(a, b, tolerance float64) bool {
+	return math.Abs(a-b) < tolerance
 }
 
-func isInBetween(left, x, right dec.Decimal) bool {
-	return left.LessThanOrEqual(x) && x.LessThanOrEqual(right)
-}
-
-type LineSegment struct {
-	P1 Point `json:"p1"`
-	P2 Point `json:"p2"`
-}
-
-func (ls LineSegment) String() string {
-	return fmt.Sprintf("(%v,%v)", ls.P1.String(), ls.P2.String())
-}
-
-func (ls LineSegment) StringFixed(places int32) string {
-	return fmt.Sprintf("(%v,%v)", ls.P1.StringFixed(places), ls.P2.StringFixed(places))
-}
-
-func (ls LineSegment) L2() dec.Decimal {
-	a := ls.P1.X.Sub(ls.P2.X).Pow(TWO)
-	b := ls.P1.Y.Sub(ls.P2.Y).Pow(TWO)
-	return a.Add(b).Pow(ONE.Div(TWO))
-}
-
-func (ls LineSegment) Mid() Point {
-	x := ls.P1.X.Add(ls.P2.X).Div(TWO)
-	y := ls.P1.Y.Add(ls.P2.Y).Div(TWO)
-	return Point{x, y}
-}
-
-func (ls *LineSegment) Direction(pt Point) bool {
-	// pt must either be p1 or p2, otherwise the return value does not make sense.
-	p1ToEnd := (&LineSegment{ls.P1, END}).L2()
-	p2ToEnd := (&LineSegment{ls.P2, END}).L2()
-	direction := p1ToEnd.GreaterThan(p2ToEnd)
-	if pt == ls.P2 {
-		return direction
-	} else if pt == ls.P1 {
-		return !direction
-	}
-	panic("The value of argument pt must either be p1 or p2.")
-}
-
-func (ls *LineSegment) OtherEnd(pt Point) Point {
-	if pt == ls.P1 {
-		return ls.P2
-	} else if pt == ls.P2 {
-		return ls.P1
-	}
-	panic("The value of argument pt must either be p1 or p2.")
+func isInBetween(left, x, right float64) bool {
+	return left <= x && x <= right
 }
 
 type LineSegmentSlice []LineSegment
-
-func FromIntersection(L1, L2 LineSegment, precision int32, tolerance dec.Decimal) (Point, error) {
-	// Constructor for Point via the intersection of two line segments
-	a1 := L1.P2.X.Sub(L1.P1.X)
-	b1 := L2.P1.X.Sub(L2.P2.X)
-	c1 := L2.P1.X.Sub(L1.P1.X)
-	a2 := L1.P2.Y.Sub(L1.P1.Y)
-	b2 := L2.P1.Y.Sub(L2.P2.Y)
-	c2 := L2.P1.Y.Sub(L1.P1.Y)
-
-	D := a1.Mul(b2).Sub(b1.Mul(a2))
-	Dx := c1.Mul(b2).Sub(b1.Mul(c2))
-	Dy := a1.Mul(c2).Sub(c1.Mul(a2))
-
-	var pt Point
-	if !almostEqual(D, ZERO, tolerance) {
-		s := Dx.Div(D)
-		t := Dy.Div(D)
-
-		if !(isInBetween(ZERO, s, ONE) && isInBetween(ZERO, t, ONE)) {
-			return pt, errors.New("no intersection found")
-		} else {
-			x := ONE.Sub(s).Mul(L1.P1.X).Add(s.Mul(L1.P2.X))
-			y := ONE.Sub(s).Mul(L1.P1.Y).Add(s.Mul(L1.P2.Y))
-			if almostEqual(x, ZERO, tolerance) {
-				x = ZERO
-			}
-			if almostEqual(y, ZERO, tolerance) {
-				y = ZERO
-			}
-			return (Point{x.Round(precision), y.Round(precision)}), nil
-		}
-	} else {
-		return pt, errors.New("no intersection found")
-	}
-}
 
 func (lsSlice LineSegmentSlice) String() string {
 	results := []string{}
@@ -172,273 +205,235 @@ func (lsSlice LineSegmentSlice) String() string {
 }
 
 type PolygonSolver struct {
-	n         int
-	precision int32
-	tolerance dec.Decimal
+	N         int
+	Precision uint
+	Tolerance float64
 }
 
-func (ps PolygonSolver) FindNextCoordinate(pt Point, theta dec.Decimal) Point {
-	// Creates the next polygon point from an existing polygon point
-	x := pt.X.Mul(theta.Cos()).Sub(pt.Y.Mul(theta.Sin()))
-	y := pt.X.Mul(theta.Sin()).Add(pt.Y.Mul(theta.Cos()))
-	if almostEqual(x, ZERO, ps.tolerance) {
-		x = ZERO
-	}
-	if almostEqual(y, ZERO, ps.tolerance) {
-		y = ZERO
-	}
-	return Point{x.Round(ps.precision), y.Round(ps.precision)}
+func (ps PolygonSolver) FindNextCoordinate(pt Point, theta float64) Point {
+	// Returns the next clockwise high-precision point from an existing polygon point
+	x := pt.X*(math.Cos(theta)) - (pt.Y * (math.Sin(theta)))
+	y := pt.X*(math.Sin(theta)) + (pt.Y * (math.Cos(theta)))
+	return Point{x, y}
 }
 
 func (ps PolygonSolver) CreatePolygonVertices() ByXY {
-	// Returns the polygon vertices
-	// TODO: Compare speed with a concurrent version by multiplying theta by a constant in a loop
-	theta := TWO.Div(dec.NewFromInt(int64(ps.n))).Mul(dec.NewFromFloat(math.Pi))
+	// Returns the vertices of a regular polygon
+	theta := 2 / float64(ps.N) * math.Pi
 	polygon := make(ByXY, 0)
 	previous := START
 
-	for i := 0; i < ps.n; i++ {
+	for i := 0; i < ps.N; i++ {
 		polygon = append(polygon, previous)
 		previous = ps.FindNextCoordinate(previous, theta)
 	}
 	return polygon
 }
 
-func (ps PolygonSolver) GetPolygonVertex(i int, theta dec.Decimal, points chan Point) {
-	// Creates a polygon point from the base polygon point
-	decI := dec.NewFromInt(int64(i))
-	product := decI.Mul(theta)
-	x := START.X.Mul(product.Cos()).Sub(START.Y.Mul(product.Sin()))
-	y := START.X.Mul(product.Sin()).Add(START.Y.Mul(product.Cos()))
-	if almostEqual(x, ZERO, ps.tolerance) {
-		x = ZERO
-	}
-	if almostEqual(y, ZERO, ps.tolerance) {
-		y = ZERO
-	}
-	points <- Point{x.Round(ps.precision), y.Round(ps.precision)}
-}
-
-// func (ps PolygonSolver) CreatePolygonVerticesConcurrently() ByXY {
-// 	// Returns the polygon vertices generated concurrently
-// 	theta := TWO.Div(dec.NewFromInt(int64(ps.n))).Mul(dec.NewFromFloat(math.Pi))
-// 	points := make(chan Point)
-// 	polygon := make([]Point, 0)
-// 	for i := 0; i < ps.n; i++ {
-// 		go ps.GetPolygonVertex(i, theta, points)
-// 	}
-// 	for i := 0; i < ps.n; i++ {
-// 		point := <-points
-// 		polygon = append(polygon, point)
-// 	}
-// 	return polygon
-// }
-
-func (ps PolygonSolver) DrawLineSegments(polygonVertices ByXY) []LineSegment {
-	// For all combinations of polygon vertices, create line segments
-	c := combin.Combinations(ps.n, 2)
+func (ps PolygonSolver) DrawLineSegments(vertices ByXY) []LineSegment {
+	// Returns the list of all basic (unbroken) line segments between all pairs of polygon vertices
+	c := combin.Combinations(ps.N, 2)
 	lineSegments := make([]LineSegment, len(c))
 	for i, v := range c {
-		start, end := polygonVertices[v[0]], polygonVertices[v[1]]
+		start, end := vertices[v[0]], vertices[v[1]]
 		lineSegments[i] = LineSegment{start, end}
 	}
 	return lineSegments
 }
 
-func (ps PolygonSolver) MapLineToPoints(lineSegments []LineSegment) LineToPoints {
-	// For all combinations of line segments, create intersection points
-	// Returns the map of unbroken line segments to points on the line segments
-	lineToPoints := make(LineToPoints)
+func (ps PolygonSolver) MapLineSegmentsToPoints(lineSegments []LineSegment) LineToPoints {
+	// Returns the mapping of unbroken line segments to all points on the respective line segment.
+	result := make(LineToPoints)
 
 	// Add both known polygon points onto the line
 	for _, line := range lineSegments {
-		lineToPoints[line] = make(map[string]Point)
-		lineToPoints[line][line.P1.StringFixed(ps.precision)] = line.P1
-		lineToPoints[line][line.P2.StringFixed(ps.precision)] = line.P2
+		lineString := line.StringFixed(ps.Precision)
+		result[lineString] = make(map[PointString]Point)
+		result[lineString][line.P1.StringFixed(ps.Precision)] = line.P1
+		result[lineString][line.P2.StringFixed(ps.Precision)] = line.P2
 	}
 
-	// Intersect all line segments
+	// Intersect every pair of line segments
 	c := combin.Combinations(len(lineSegments), 2)
 	for _, v := range c {
 		first, second := lineSegments[v[0]], lineSegments[v[1]]
-		point, err := FromIntersection(first, second, ps.precision, ps.tolerance)
+		point, err := NewFromIntersection(first, second, ps.Precision, ps.Tolerance)
+
+		// Line segments may not intersect
 		if err == nil {
-			lineToPoints[first][point.StringFixed(ps.precision)] = point
-			lineToPoints[second][point.StringFixed(ps.precision)] = point
+			result[first.StringFixed(ps.Precision)][point.StringFixed(ps.Precision)] = point
+			result[second.StringFixed(ps.Precision)][point.StringFixed(ps.Precision)] = point
 		}
 	}
-	return lineToPoints
+	return result
 }
 
-// func (ps PolygonSolver) MapFullAdjacencyList(lineToPoints LineToPoints, precision int32) AdjacencyList {
-// 	// Returns the full adjacency list of nodes and their connected nodes (ignoring direction)
-// 	adjacencyList := make(AdjacencyList)
-// 	for _, points := range lineToPoints {
-// 		// Sort all the points on the unbroken line and get each broken line segment
-// 		sortedPoints := points.ToSlice()
-// 		sort.Stable(ByXY(sortedPoints))
+func (ps PolygonSolver) CreateGraph(lineToPoints LineToPoints) (AdjacencyList, Indegrees) {
+	// Creates the adjacency list of the graph by:
+	// 1. Creating all the smaller line segments that make up the edges of the graph
+	// 2. Adding the points to the adjacency list
+	fmt.Printf("Creating graph for n=%d...\n", ps.N)
 
-// 		for i := 1; i < len(sortedPoints); i++ {
-// 			// This part is can cause issues because the values are different in decimal form,
-// 			// even though the differences are tiny.
-// 			// A better way is to use a tree data structure to allow O(log n) searching
-// 			// If we truncate it to certain number of digits, we can use O(1) searching
-// 			currPt := Point{sortedPoints[i].x.Truncate(precision), sortedPoints[i].y.Truncate(precision)}
-// 			prevPt := Point{sortedPoints[i-1].x.Truncate(precision), sortedPoints[i-1].y.Truncate(precision)}
-// 			// fmt.Println(currPt, currPt.x.Equal(ZERO), currPt.y.Equal(ONE.Neg()))
-// 			// Can confirm that similar value decimals are being placed into the hash
-// 			// Next step: check that struct values that comprise decimal
-// 			// Unable to do this because struct fields are not exported
+	adjacencyList := make(AdjacencyList)
+	indegrees := make(map[PointString]int)
 
-// 			if _, ok := adjacencyList[currPt]; ok {
-// 				adjacencyList[currPt].Add(prevPt)
-// 			} else {
-// 				adjacencyList[currPt] = mapset.NewSet(prevPt)
-// 			}
+	for _, points := range lineToPoints {
+		// Create base adjacency list with all keys
+		for point := range points {
+			if _, ok := adjacencyList[point]; !ok {
+				adjacencyList[point] = make(map[PointString]bool)
+				indegrees[point] = 0
+			}
+		}
 
-// 			if _, ok := adjacencyList[prevPt]; ok {
-// 				adjacencyList[prevPt].Add(currPt)
-// 			} else {
-// 				adjacencyList[prevPt] = mapset.NewSet(currPt)
-// 			}
-// 		}
-// 	}
-// 	return adjacencyList
-// }
+		// Sort points by x and y coordinates
+		sortedPoints := make(ByXY, 0)
+		for _, point := range points {
+			sortedPoints = append(sortedPoints, point)
+		}
+		sort.Stable(sortedPoints)
 
-// Create a channel for every goroutine
+		for i := 0; i < len(sortedPoints)-1; i++ {
+			previous, current := sortedPoints[i], sortedPoints[i+1]
 
-// # Approach One: Publish to all relevant channels
+			// Create line segment for each successive pair of points on the unbroken line segment
+			edge := LineSegment{previous, current}
 
-// Each vertex has its own channel. When the channel is full, the goroutine kicks off.
-// At the end of the goroutine, it writes back to all channels that requires its result.
+			// Standardise first and second
+			first := current.StringFixed(ps.Precision)
+			second := previous.StringFixed(ps.Precision)
+			if edge.Direction() {
+				first, second = second, first
+			}
 
-// The goroutine needs to take in:
-// 1. Its input channel where it will read from
-// 2. The slice of output channels it needs to write to
+			// Add to adjacency list and increment value of indegrees
+			adjacencyList[first][second] = true
+			indegrees[second] += 1
+		}
+	}
 
-// The benefit is that we don't have to topo-sort ahead of time, everything just works as-is.
-// You can delegate the responsibility of sending the message to the primary goroutine in a pub-sub model.
-// The pub-sub model can allow for symmetry to be handled inside the primary goroutine.
+	return adjacencyList, indegrees
+}
 
-// func (ps PolygonSolver) MapPointToChannel(adjacencyList AdjacencyList) map[Point]chan int {
-// 	pointToChannel := make(map[Point]chan int)
-// 	for p := range adjacencyList {
-// 		pointToChannel[p] = make(chan int)
-// 	}
-// 	return pointToChannel
-// }
+func d(x, y int) int {
+	if x%y == 0 {
+		return 1
+	}
+	return 0
+}
 
-// func GetLineToPoints(precision int32, tolerance dec.Decimal, n int) LineToPoints {
-// 	ps := PolygonSolver{n}
-// 	return ps.MapLineToPoints(precision, tolerance)
-// }
+func (ps PolygonSolver) GetTheoreticalTotalPoints() int {
+	// Returns the theoretical number of total points for the intersections of all line segments
+	// created by the vertices of a polygon given by the sum of polygon vertices and interior
+	// intersection points
+	p := func(x, y int) int {
+		return int(math.Pow(float64(x), float64(y)))
+	}
+	n := ps.N
 
-// func GetFullAdjacencyList(precision int32, tolerance dec.Decimal, n int) AdjacencyList {
-// 	ps := PolygonSolver{n}
-// 	lineToPoints := ps.MapLineToPoints(precision, tolerance)
-// 	return ps.MapFullAdjacencyList(lineToPoints, precision)
-// }
+	// tN denotes the term with divisible check in N
+	t2 := (-5*p(n, 3) + 45*p(n, 2) - 70*n + 24) / 24 * d(n, 2)
+	t4 := (3 * n / 2) * d(n, 4)
+	t6 := (-45*p(n, 2) + 262*n) / 6 * d(n, 6)
+	t12 := 42 * n * d(n, 12)
+	t18 := 60 * n * d(n, 18)
+	t24 := 35 * n * d(n, 24)
+	t30 := 38 * n * d(n, 30)
+	t42 := 82 * n * d(n, 42)
+	t60 := 330 * n * d(n, 60)
+	t84 := 144 * n * d(n, 84)
+	t90 := 96 * n * d(n, 90)
+	t120 := 144 * n * d(n, 120)
+	t210 := 96 * n * d(n, 210)
+	interior := combin.Binomial(n, 4) + t2 - t4 + t6 + t12 + t18 + t24 - t30 - t42 - t60 - t84 - t90 - t120 - t210
+	return interior + n
+}
 
-// func GetPointToChannel(precision int32, tolerance dec.Decimal, n int) map[Point]chan int {
-// 	ps := PolygonSolver{n}
-// 	lineToPoints := ps.MapLineToPoints(precision, tolerance)
-// 	adjacencyList := ps.MapFullAdjacencyList(lineToPoints, precision)
-// 	return ps.MapPointToChannel(adjacencyList)
-// }
+func (ps PolygonSolver) CheckIntersections(adjacencyList AdjacencyList) {
+	// Checks that the total number of generated points are correct
+	total := ps.GetTheoreticalTotalPoints()
+	if total != len(adjacencyList) {
+		err := fmt.Errorf("expected %d points, got %d points", total, len(adjacencyList))
+		panic(err)
+	}
+}
 
-// func GetTotalPoints(precision int32, tolerance dec.Decimal, n int) int {
-// 	return len(GetPointToChannel(precision, tolerance, n))
-// }
+func (ps PolygonSolver) GetTopologicalOrdering(adjacencyList AdjacencyList, indegrees Indegrees) []PointString {
+	// Returns the topological order of the graph
+	fmt.Println("Getting topological order...")
+	var queue deque.Deque[PointString]
 
-// func GetSortedPoints(precision int32, tolerance dec.Decimal, n int) ByXY {
-// 	pointToChannel := GetPointToChannel(precision, tolerance, n)
-// 	sortedPoints := make(ByXY, 0)
-// 	for k := range pointToChannel {
-// 		sortedPoints = append(sortedPoints, k)
-// 	}
-// 	sort.Sort(sortedPoints)
-// 	return sortedPoints
-// }
+	// Make copies of arguments
+	adjacencyListCopy := make(AdjacencyList)
+	for k, v := range adjacencyList {
+		adjacencyListCopy[k] = v
+	}
+	indegreesCopy := make(Indegrees)
+	for k, v := range indegrees {
+		indegreesCopy[k] = v
+	}
 
-// func d(x, y int) int {
-// 	if x%y == 0 {
-// 		return 1
-// 	}
-// 	return 0
-// }
+	queue.PushBack(START.StringFixed(ps.Precision))
+	order := make([]PointString, 0)
 
-// func TheoreticalTotalPoints(n int) int {
-// 	// Returns the theoretical number of total points for the intersections of all line segments
-// 	// created by the vertices of a polygon given by the sum of polygon vertices and interior
-// 	// intersection points
-// 	p := func(x, y int) int {
-// 		return int(math.Pow(float64(x), float64(y)))
-// 	}
+	for queue.Len() > 0 {
+		n := queue.PopFront()
 
-// 	// tN denotes the term with divisible check in N
-// 	t2 := (-5*p(n, 3) + 45*p(n, 2) - 70*n + 24) / 24 * d(n, 2)
-// 	t4 := (3 * n / 2) * d(n, 4)
-// 	t6 := (-45*p(n, 2) + 262*n) / 6 * d(n, 6)
-// 	t12 := 42 * n * d(n, 12)
-// 	t18 := 60 * n * d(n, 18)
-// 	t24 := 35 * n * d(n, 24)
-// 	t30 := 38 * n * d(n, 30)
-// 	t42 := 82 * n * d(n, 42)
-// 	t60 := 330 * n * d(n, 60)
-// 	t84 := 144 * n * d(n, 84)
-// 	t90 := 96 * n * d(n, 90)
-// 	t120 := 144 * n * d(n, 120)
-// 	t210 := 96 * n * d(n, 210)
-// 	interior := combin.Binomial(n, 4) + t2 - t4 + t6 + t12 + t18 + t24 - t30 - t42 - t60 - t84 - t90 - t120 - t210
-// 	return interior + n
-// }
+		for nb := range adjacencyListCopy[n] {
+			indegreesCopy[nb] -= 1
+			if indegreesCopy[nb] == 0 {
+				queue.PushBack(nb)
+			}
+		}
 
-// type Result struct {
-// 	p int
-// 	i int
-// 	t dec.Decimal
-// 	n int
-// }
+		delete(adjacencyListCopy, n)
+		order = append(order, n)
+	}
 
-// func GridSearch() {
-// 	// Find a precision and tolerance that has highest
-// 	bestCombination := Result{}
-// 	for p := 1; p < 16; p++ {
-// 		for i := 1; i < 16; i++ {
-// 			for n := 4; n < 50; n += 2 {
-// 				t := dec.NewFromFloatWithExponent(0.1, int32(-i))
-// 				totalPoints := GetTotalPoints(int32(p), t, n)
-// 				fmt.Println(p, i, n, totalPoints, TheoreticalTotalPoints(n))
-// 				if totalPoints != TheoreticalTotalPoints(n) {
-// 					break
-// 				}
-// 				if n < bestCombination.n {
-// 					continue
-// 				}
-// 				bestCombination = Result{p, i, t, n}
-// 			}
-// 		}
-// 	}
-// 	fmt.Println(bestCombination)
-// }
+	fmt.Println("Topological ordering complete.")
+	return order
+}
+
+func (ps PolygonSolver) Solve(adjacencyList AdjacencyList, indegrees Indegrees, order []PointString) map[PointString]int {
+	// Solves the polygons problem progressively (via bottom-up dynamic programming) by:
+	// 1. Topologically sorting the nodes in the graph
+	// 2. Calculating the value of nodes by looking up previously calculated values
+
+	// Initialise the bottom-up dynamic programming map
+	dp := make(map[PointString]int)
+	for node := range adjacencyList {
+		dp[node] = 0
+	}
+	dp[START.StringFixed(ps.Precision)] = 1
+
+	fmt.Println("Summing over the graph...")
+	for _, node := range order {
+		for nb := range adjacencyList[node] {
+			dp[nb] += dp[node]
+		}
+	}
+	return dp
+}
+
+func (ps PolygonSolver) Result(dp map[PointString]int) int {
+	return dp[END.StringFixed(ps.Precision)]
+}
 
 func main() {
-	// GridSearch()
-	p, t := int32(15), dec.NewFromFloat(1e-10)
+	p, t := uint(10), 1e-10
 
-	ps := PolygonSolver{4, p, t}
+	ps := PolygonSolver{6, p, t}
 	polygonVertices := ps.CreatePolygonVertices()
 	lineSegments := ps.DrawLineSegments(polygonVertices)
-	lineToPoints := ps.MapLineToPoints(lineSegments)
-	fmt.Println(lineToPoints)
-
-	// file, fileErr := os.Create("results")
-	// if fileErr != nil {
-	// 	fmt.Println(fileErr)
-	// 	return
-	// }
-	// fmt.Fprintf(file, "%v\n", lineSegments)
-	// var _ FixedStringer = Point{} // Verify that RHS implements LHS.
-	// var _ I = T{}       // Verify that T implements I.
+	lineToPoints := ps.MapLineSegmentsToPoints(lineSegments)
+	adjacencyList, indegrees := ps.CreateGraph(lineToPoints)
+	// ps.CheckIntersections(adjacencyList)
+	order := ps.GetTopologicalOrdering(adjacencyList, indegrees)
+	dp := ps.Solve(adjacencyList, indegrees, order)
+	result := ps.Result(dp)
+	fmt.Println(adjacencyList)
+	fmt.Println("...")
+	fmt.Println(dp)
+	fmt.Println("...")
+	fmt.Println(result)
 }
