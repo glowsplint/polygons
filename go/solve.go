@@ -1,10 +1,13 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"math/big"
+	"os"
 	"regexp"
 	"sort"
 	"strconv"
@@ -34,7 +37,11 @@ func (p Point) String() string {
 }
 
 func (p Point) StringFixed(places uint) PointString {
-	return PointString(fmt.Sprintf("(%v,%v)", roundFloat(p.X, places), roundFloat(p.Y, places)))
+	x := roundFloat(p.X, places)
+	y := roundFloat(p.Y, places)
+	fX := strconv.FormatFloat(x, 'f', int(places), 64)
+	fY := strconv.FormatFloat(y, 'f', int(places), 64)
+	return PointString(fmt.Sprintf("(%v,%v)", fX, fY))
 }
 
 func (p Point) ReducedPrecision(precision uint, tolerance float64) Point {
@@ -431,6 +438,60 @@ func (ps PolygonSolver) Result(dp map[PointString]big.Int) big.Int {
 	return dp[END.StringFixed(ps.Precision)]
 }
 
+func (ps PolygonSolver) SaveResult(result big.Int, filename string) {
+	// Saves the obtained result to disk.
+	// Raises an exception if the current results file has a different value.
+	jsonFile, err := os.Open(filename)
+	if err != nil {
+		fmt.Println(err)
+	}
+	defer jsonFile.Close()
+
+	byteValue, _ := io.ReadAll(jsonFile)
+
+	parsedItem := make(map[string]string)
+	json.Unmarshal([]byte(byteValue), &parsedItem)
+
+	// Check that the entry is the same
+	s := strconv.Itoa(ps.N)
+	extracted_result, ok := parsedItem[s]
+
+	if !ok {
+		parsedItem[s] = result.String()
+		jsonStr, err := json.MarshalIndent(parsedItem, "", "")
+		if err != nil {
+			panic(err)
+		}
+		os.WriteFile(filename, jsonStr, 0644)
+	} else if extracted_result != result.String() {
+		err = fmt.Errorf("the calculated value for n=%v does not equal the existing value", ps.N)
+		panic(err)
+	}
+	fmt.Println("Calculated result matches existing result.")
+}
+
+func (ps PolygonSolver) SaveAdjacencyListKeys(adjacencyList AdjacencyList, filename string) {
+	fmt.Printf("Writing to %v...\n", filename)
+	jsonFile, err := os.Open(filename)
+	if err != nil {
+		fmt.Println(err)
+	}
+	defer jsonFile.Close()
+
+	// Create slice of keys
+	adjacencyListKeys := make([]PointString, 0)
+	for k := range adjacencyList {
+		adjacencyListKeys = append(adjacencyListKeys, k)
+	}
+
+	// Write keys to disk
+	jsonStr, err := json.MarshalIndent(adjacencyListKeys, "", "")
+	if err != nil {
+		panic(err)
+	}
+	os.WriteFile(filename, jsonStr, 0644)
+}
+
 func run(p uint, t float64, n int) {
 	ps := PolygonSolver{n, p, t}
 	polygonVertices := ps.CreatePolygonVertices()
@@ -441,13 +502,14 @@ func run(p uint, t float64, n int) {
 	dp := ps.Solve(adjacencyList, indegrees, order)
 	result := ps.Result(dp)
 	fmt.Println(result.String())
+	ps.SaveAdjacencyListKeys(adjacencyList, "adjacencyList.json")
 	ps.CheckIntersections(adjacencyList)
+	ps.SaveResult(result, "results.json")
 }
 
 func main() {
 	p, t := uint(10), 1e-10
-	for i := 40; i < 60; i += 2 {
+	for i := 54; i < 100; i += 2 {
 		run(p, t, i)
 	}
-	// run(p, t, 10)
 }

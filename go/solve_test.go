@@ -7,12 +7,10 @@ import (
 	"os"
 	"reflect"
 	"testing"
-
-	dec "github.com/shopspring/decimal"
 )
 
-var precision int32 = 15
-var tolerance dec.Decimal = dec.NewFromFloat(1e-10)
+var precision uint = 15
+var tolerance float64 = 1e-10
 
 type BasePolygonCase struct {
 	Name            string        `json:"name"`
@@ -36,7 +34,7 @@ type PolygonTestCase struct {
 }
 
 type FixedStringer interface {
-	StringFixed(precision int32) string
+	StringFixed(precision uint) string
 }
 
 var polygonTestCases = GetTestCases()
@@ -54,15 +52,15 @@ func NewFromBaseCase(bpc BasePolygonCase) PolygonTestCase {
 
 	// Create and attach polygon vertices
 	for _, v := range bpc.PolygonVertices {
-		pv = append(pv, Point{dec.NewFromFloat(v[0]), dec.NewFromFloat(v[1])})
+		pv = append(pv, Point{v[0], v[1]})
 	}
 	polygonTestCase.PolygonVertices = pv
 
 	// Create and attach line segments
 	for _, v := range bpc.LineSegments {
 		ls = append(ls, LineSegment{
-			Point{dec.NewFromFloat(v[0][0]), dec.NewFromFloat(v[0][1])},
-			Point{dec.NewFromFloat(v[1][0]), dec.NewFromFloat(v[1][1])},
+			Point{v[0][0], v[0][1]},
+			Point{v[1][0], v[1][1]},
 		})
 	}
 	polygonTestCase.LineSegments = ls
@@ -70,13 +68,13 @@ func NewFromBaseCase(bpc BasePolygonCase) PolygonTestCase {
 	// Create and attach line to points map
 	for _, v := range bpc.LineToPoints {
 		ls := LineSegment{
-			Point{dec.NewFromFloat(v.LineSegment[0][0]), dec.NewFromFloat(v.LineSegment[0][1])},
-			Point{dec.NewFromFloat(v.LineSegment[1][0]), dec.NewFromFloat(v.LineSegment[1][1])},
+			Point{v.LineSegment[0][0], v.LineSegment[0][1]},
+			Point{v.LineSegment[1][0], v.LineSegment[1][1]},
 		}
-		ltp[ls] = make(map[string]Point)
+		ltp[ls.StringFixed(precision)] = make(map[PointString]Point)
 		for _, p := range v.Points {
-			point := Point{dec.NewFromFloat(p[0]), dec.NewFromFloat(p[1])}
-			ltp[ls][point.StringFixed(precision)] = point
+			point := Point{p[0], p[1]}
+			ltp[ls.StringFixed(precision)][point.StringFixed(precision)] = point
 		}
 	}
 
@@ -114,8 +112,6 @@ func GetTestCases() []PolygonTestCase {
 	return polygonTestCases
 }
 
-type StringDecimalMap map[string]dec.Decimal
-
 func AreTwoFixedStringerSlicesEqual(a, b []FixedStringer, t *testing.T) bool {
 	// Two []Point are considered to be equal if they contain the same Points
 	// Create map with truncated strings as keys and Decimal struct as values for got
@@ -123,10 +119,10 @@ func AreTwoFixedStringerSlicesEqual(a, b []FixedStringer, t *testing.T) bool {
 
 	tA, tB := make(map[string]FixedStringer), make(map[string]FixedStringer)
 	for _, p := range a {
-		tA[p.StringFixed(precision)] = p
+		tA[string(p.StringFixed(precision))] = p
 	}
 	for _, p := range b {
-		tB[p.StringFixed(precision)] = p
+		tB[string(p.StringFixed(precision))] = p
 	}
 
 	// Check maps are equal by:
@@ -169,7 +165,7 @@ func TestCreatePolygonVertices(t *testing.T) {
 			got = append(got, v)
 		}
 		for _, v := range testCase.PolygonVertices {
-			want = append(want, v)
+			want = append(want, string(v))
 		}
 		AreTwoFixedStringerSlicesEqual(got, want, t)
 	}

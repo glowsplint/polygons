@@ -123,6 +123,9 @@ class Point:
     def __repr__(self) -> str:
         return f"Point({self.x}, {self.y})"
 
+    def string(self) -> str:
+        return f"({self.x},{self.y})"
+
 
 class LineSegment:
 
@@ -516,6 +519,18 @@ class PolygonSolver:
             )
         print("Calculated result matches existing result.")
 
+    def write_adjacency_list_keys_to_disk(self, filename: str) -> None:
+        """
+        Saves the adjacency list keys to disk.
+
+        Args:
+            filename (str): Name of file to write to
+        """
+        with open(filename, "w", encoding="utf-8") as f:
+            points = [point.string() for point in self.adjacency_list]
+            json.dump(points, f)
+        print(f"Dumped adjacency list keys to {filename}.")
+
 
 @fn_timer
 def main(n: int) -> PolygonSolver:
@@ -526,4 +541,5 @@ def main(n: int) -> PolygonSolver:
 
 
 if __name__ == "__main__":
-    solver = main(60)
+    solver = main(54)
+    solver.write_adjacency_list_keys_to_disk("adjacency_list.json")
