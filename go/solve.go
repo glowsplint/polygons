@@ -141,6 +141,7 @@ func (ls *LineSegment) Direction() bool {
 // Types
 type LineToPoints map[LineSegmentString]map[PointString]Point
 type PointString string
+type LineSegments map[LineSegmentString]bool
 type AdjacencyList map[PointString]map[PointString]bool
 type Indegrees map[PointString]int
 
@@ -226,8 +227,8 @@ type PolygonSolver struct {
 func (ps PolygonSolver) FindNextCoordinate(i int, pt Point, theta float64) Point {
 	// Returns the next clockwise point from an existing polygon point
 	product := theta * float64(i)
-	x := pt.X*(math.Cos(product)) - (pt.Y * (math.Sin(product)))
-	y := pt.X*(math.Sin(product)) + (pt.Y * (math.Cos(product)))
+	x := (pt.X * (math.Cos(product))) - (pt.Y * (math.Sin(product)))
+	y := (pt.X * (math.Sin(product))) + (pt.Y * (math.Cos(product)))
 	return Point{x, y}
 }
 
@@ -286,12 +287,13 @@ func (ps PolygonSolver) MapLineSegmentsToPoints(lineSegments []LineSegment) Line
 	return result
 }
 
-func (ps PolygonSolver) CreateGraph(lineToPoints LineToPoints) (AdjacencyList, Indegrees) {
+func (ps PolygonSolver) CreateGraph(lineToPoints LineToPoints) (LineSegments, AdjacencyList, Indegrees) {
 	// Creates the adjacency list of the graph by:
 	// 1. Creating all the smaller line segments that make up the edges of the graph
 	// 2. Adding the points to the adjacency list
 	fmt.Printf("Creating graph for n=%d...\n", ps.N)
 
+	lineSegments := make(LineSegments)
 	adjacencyList := make(AdjacencyList)
 	indegrees := make(map[PointString]int)
 
@@ -316,6 +318,7 @@ func (ps PolygonSolver) CreateGraph(lineToPoints LineToPoints) (AdjacencyList, I
 
 			// Create line segment for each successive pair of points on the unbroken line segment
 			edge := LineSegment{previous, current}
+			lineSegments[edge.StringFixed(ps.Precision)] = true
 
 			// Standardise first and second
 			first := current.StringFixed(ps.Precision)
@@ -330,7 +333,7 @@ func (ps PolygonSolver) CreateGraph(lineToPoints LineToPoints) (AdjacencyList, I
 		}
 	}
 
-	return adjacencyList, indegrees
+	return lineSegments, adjacencyList, indegrees
 }
 
 func d(x, y int) int {
@@ -339,14 +342,13 @@ func d(x, y int) int {
 	}
 	return 0
 }
+func p(x, y int) int {
+	return int(math.Pow(float64(x), float64(y)))
+}
 
 func (ps PolygonSolver) GetTheoreticalTotalPoints() int {
-	// Returns the theoretical number of total points for the intersections of all line segments
-	// created by the vertices of a polygon given by the sum of polygon vertices and interior
-	// intersection points
-	p := func(x, y int) int {
-		return int(math.Pow(float64(x), float64(y)))
-	}
+	// Returns the theoretical number of nodes in regular n-gon with all diagonals drawn
+	// Reference: https://oeis.org/A007569
 	n := ps.N
 
 	// tN denotes the term with divisible check in N
@@ -367,13 +369,63 @@ func (ps PolygonSolver) GetTheoreticalTotalPoints() int {
 	return interior + n
 }
 
-func (ps PolygonSolver) CheckIntersections(adjacencyList AdjacencyList) {
+func (ps PolygonSolver) CheckIntersections(adjacencyList AdjacencyList) error {
 	// Checks that the total number of generated points are correct
 	total := ps.GetTheoreticalTotalPoints()
 	if total != len(adjacencyList) {
-		err := fmt.Errorf("expected %d points, got %d points", total, len(adjacencyList))
+		return fmt.Errorf("expected %d points, got %d points", total, len(adjacencyList))
+	}
+	return nil
+}
+
+func (ps PolygonSolver) GetTheoreticalRegions() int {
+	// Returns the theoretical number of regions in regular n-gon with all diagonals drawn.
+	// Reference: https://oeis.org/A007678
+	n := ps.N
+
+	// tN denotes the term with divisible check in N
+	t0 := (p(n, 4) - 6*p(n, 3) + 23*p(n, 2) - 42*n + 24) / 24
+	t2 := (-5*p(n, 3) + 42*p(n, 2) - 40*n - 48) / 48 * d(n, 2)
+	t4 := -3 * n / 4 * d(n, 4)
+	t6 := (-53*p(n, 2) + 310*n) / 12 * d(n, 6)
+	t12 := 49 * n / 2 * d(n, 12)
+	t18 := 32 * n * d(n, 18)
+	t24 := 19 * n * d(n, 24)
+	t30 := -36 * n * d(n, 30)
+	t42 := -50 * n * d(n, 42)
+	t60 := -190 * n * d(n, 60)
+	t84 := -78 * n * d(n, 84)
+	t90 := -48 * n * d(n, 90)
+	t120 := -78 * n * d(n, 120)
+	t210 := -48 * n * d(n, 210)
+	return t0 + t2 + t4 + t6 + t12 + t18 + t24 + t30 + t42 + t60 + t84 + t90 + t120 + t210
+}
+
+func (ps PolygonSolver) GetTheoreticalLineSegments() int {
+	// Returns the theoretical number of line segments in regular n-gon with all diagonals drawn
+	// Reference: https://oeis.org/A135565
+	return ps.GetTheoreticalTotalPoints() + ps.GetTheoreticalRegions() - 1
+}
+
+func (ps PolygonSolver) CheckLineSegments(lineSegments LineSegments) error {
+	total := ps.GetTheoreticalLineSegments()
+	if total != len(lineSegments) {
+		return fmt.Errorf("expected %d line segments, got %d line segments", total, len(lineSegments))
+	}
+	return nil
+}
+
+func (ps PolygonSolver) CheckAll(lineSegments LineSegments, adjacencyList AdjacencyList) error {
+	var err error
+	err = ps.CheckIntersections(adjacencyList)
+	if err != nil {
 		panic(err)
 	}
+	err = ps.CheckLineSegments(lineSegments)
+	if err != nil {
+		panic(err)
+	}
+	return nil
 }
 
 func (ps PolygonSolver) GetTopologicalOrdering(adjacencyList AdjacencyList, indegrees Indegrees) []PointString {
@@ -428,7 +480,7 @@ func (ps PolygonSolver) Solve(adjacencyList AdjacencyList, indegrees Indegrees, 
 	for _, node := range order {
 		for nb := range adjacencyList[node] {
 			a, b := dp[nb], dp[node]
-			dp[nb] = *a.Add(&a, &b)
+			dp[nb] = *new(big.Int).Add(&a, &b)
 		}
 	}
 	return dp
@@ -492,24 +544,49 @@ func (ps PolygonSolver) SaveAdjacencyListKeys(adjacencyList AdjacencyList, filen
 	os.WriteFile(filename, jsonStr, 0644)
 }
 
-func run(p uint, t float64, n int) {
+func run(p uint, t float64, n int) (big.Int, error) {
 	ps := PolygonSolver{n, p, t}
 	polygonVertices := ps.CreatePolygonVertices()
-	lineSegments := ps.DrawLineSegments(polygonVertices)
-	lineToPoints := ps.MapLineSegmentsToPoints(lineSegments)
-	adjacencyList, indegrees := ps.CreateGraph(lineToPoints)
+	unbrokenLineSegments := ps.DrawLineSegments(polygonVertices)
+	lineToPoints := ps.MapLineSegmentsToPoints(unbrokenLineSegments)
+	lineSegments, adjacencyList, indegrees := ps.CreateGraph(lineToPoints)
 	order := ps.GetTopologicalOrdering(adjacencyList, indegrees)
 	dp := ps.Solve(adjacencyList, indegrees, order)
 	result := ps.Result(dp)
 	fmt.Println(result.String())
 	ps.SaveAdjacencyListKeys(adjacencyList, "adjacencyList.json")
-	ps.CheckIntersections(adjacencyList)
-	ps.SaveResult(result, "results.json")
+	err := ps.CheckAll(lineSegments, adjacencyList)
+	if err != nil {
+		return *big.NewInt(0), err
+	}
+	return result, nil
+	// ps.SaveResult(result, "results.json")
+}
+
+func GridSearch(n int) (uint, int) {
+	// Find a combination of p and t that works for a given value of n
+	for p := uint(5); p < 20; p++ {
+		for k := 5; k < 20; k++ {
+			t := math.Pow10(-k)
+			result, err := run(p, t, n)
+			if err != nil || result.Cmp(big.NewInt(0)) == 0 {
+				continue
+			}
+			// If we reach here, we have found a working combination
+			return p, k
+		}
+	}
+	return 0, 0
 }
 
 func main() {
-	p, t := uint(10), 1e-10
+	p, t := uint(6), math.Pow10(-5)
 	for i := 54; i < 100; i += 2 {
-		run(p, t, i)
+		result, err := run(p, t, i)
+		if err != nil || result.Cmp(big.NewInt(0)) == 0 {
+			panic(err)
+		}
 	}
+	// p, k := GridSearch(60)
+	// fmt.Println(p, k)
 }
