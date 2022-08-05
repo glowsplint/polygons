@@ -2,6 +2,7 @@ import itertools
 import json
 import operator
 import time
+import warnings
 from collections import deque
 from decimal import *  # pylint: disable=wildcard-import
 from functools import cached_property, wraps
@@ -27,7 +28,7 @@ def fn_timer(fn: Callable) -> Callable:
     Decorates a function to display running time.
 
     Args:
-        fn (function): _description_
+        fn (Callable): Function to be decorated
 
     Returns:
         Callable: Decorated function
@@ -50,10 +51,7 @@ def zeroise(val: Decimal) -> Decimal:
     Otherwise returns the value itself.
 
     Args:
-        val (Optional[float]): _description_
-
-    Returns:
-        Optional[float]: _description_
+        val (Decimal): Decimal to be zeroised
     """
     return val if abs(val) > TOLERANCE else ZERO
 
@@ -72,7 +70,7 @@ class Point:
         cls, line_a: "LineSegment", line_b: "LineSegment"
     ) -> Optional["Point"]:
         """
-        Alternate constructor for Point via intersection of two LineSegments.
+        Constructor for Point instances via intersection of two LineSegments.
         """
         a1, b1, c1 = (
             (line_a.p2.x - line_a.p1.x),
@@ -105,12 +103,33 @@ class Point:
         return pt.reduced_precision()
 
     def reduced_precision(self, precision=PRECISION) -> "Point":
+        """
+        Returns a reduced precision Point instance of itself.
+
+        Args:
+            precision (_type_, optional): _description_. Defaults to PRECISION.
+        """
         x = round(zeroise(self.x), precision)
         y = round(zeroise(self.y), precision)
         return Point(x, y)
 
     def value(self, polygon_solver: "PolygonSolver") -> int:
+        """
+        Returns the calculated value of a node.
+
+        Args:
+            polygon_solver (PolygonSolver): PolygonSolver instance
+        """
         return polygon_solver.dp[self]
+
+    def order(self, polygon_solver: "PolygonSolver") -> int:
+        """
+        Returns the topological order of a node, bounded by (0, n-1) inclusive.
+
+        Args:
+            polygon_solver (PolygonSolver): PolygonSolver instance
+        """
+        return polygon_solver.point_ordering[self]
 
     def __eq__(self, other) -> bool:
         if isinstance(other, Point):
@@ -225,12 +244,16 @@ class PolygonSolver:
 
         self.polygon = self.create_regular_polygon(n)
         self.line_segments, self.adjacency_list, self.indegrees = self.create_graph()
+        self.order = self.get_topological_ordering(self.adjacency_list, self.indegrees)
+        self.point_ordering, self.graph = self.create_simple_graph(
+            self.adjacency_list, self.order
+        )
 
         # Checks that the generated number of interior points are correct
         self.check_intersections(self.adjacency_list)
 
         # Solve the graph
-        self.dp = self.solve()
+        self.dp = self.solve(self.adjacency_list, self.indegrees, self.order)
 
         if self.plot:
             if n > 30:
@@ -351,9 +374,34 @@ class PolygonSolver:
 
         return line_segments, adjacency_list, indegrees
 
-    def get_topological_ordering(self) -> list[Point]:
+    def create_simple_graph(
+        self, adjacency_list: dict[Point, set[Point]], topological_order: list[Point]
+    ) -> tuple[dict[Point, int], dict[int, set[int]]]:
         """
-        Returns the topological ordering of the graph.
+        Returns the simplified adjacency list that labels each node with their topological order
+        from 0 to n-1, 0 being the start point and n-1 being the end point.
+
+        Args:
+            adjacency_list (dict[Point, set[Point]]): _description_
+
+        Returns:
+            dict[int, set[int]]: _description_
+        """
+        # Map point to their respective index in the topological order list
+        point_ordering: dict[Point, int] = {}
+        for i, point in enumerate(topological_order):
+            point_ordering[point] = i
+
+        graph: dict[int, set[int]] = {}
+        for k, v in adjacency_list.items():
+            graph[point_ordering[k]] = set(point_ordering[item] for item in v)
+        return point_ordering, graph
+
+    def get_topological_ordering(
+        self, adjacency_list: dict[Point, set[Point]], indegrees: dict[Point, int]
+    ) -> list[Point]:
+        """
+        Returns the topological ordering of the graph. Uses Kahn's algorithm.
 
         Returns:
             list[Point]: List of Points in the graph sorted topologically, starting
@@ -362,37 +410,41 @@ class PolygonSolver:
         print("Getting topological order...")
         queue = deque([Point(*START)])
         order: list[Point] = []
-        adjacency_list = self.adjacency_list.copy()
-        indegrees = self.indegrees.copy()
+        adjacency_list_copy = adjacency_list.copy()
+        indegrees_copy = indegrees.copy()
 
         while queue:
             n = queue.popleft()
 
-            for nb in adjacency_list[n]:
-                indegrees[nb] -= 1
-                if indegrees[nb] == 0:
+            for nb in adjacency_list_copy[n]:
+                indegrees_copy[nb] -= 1
+                if indegrees_copy[nb] == 0:
                     queue.append(nb)
 
-            del adjacency_list[n]
+            del adjacency_list_copy[n]
             order.append(n)
 
         print("Topological ordering complete.")
         return order
 
-    def solve(self) -> dict[Point, int]:
+    def solve(
+        self,
+        adjacency_list: dict[Point, set[Point]],
+        indegrees: dict[Point, int],
+        topological_order: list[Point],
+    ) -> dict[Point, int]:
         """
-        Solves the polygons problem progressively (via bottom-up dynamic programming) by:
+        Solves the polygons problem via bottom-up dynamic programming by:
         1. Topologically sorting the nodes in the graph
         2. Calculating the value of nodes by looking up previously calculated values
         """
 
-        dp = {node: 0 for node in self.adjacency_list}
+        dp = {node: 0 for node in adjacency_list}
         dp[Point(*START)] = 1
-        order = self.get_topological_ordering()
 
         print("Summing over the graph...")
 
-        for node in tqdm(order):
+        for node in tqdm(topological_order):
             for nb in self.adjacency_list[node]:
                 dp[nb] += dp[node]
         return dp
@@ -406,6 +458,7 @@ class PolygonSolver:
         show_lines: bool = True,
         show_points: bool = True,
         show_values: bool = True,
+        show_order: bool = False,
         point_size: float = 1,
         head_width: float = 0.03,
     ) -> None:
@@ -416,13 +469,19 @@ class PolygonSolver:
 
         # Configurations
         limit = 1.1
-        offset = Decimal(-0.07)
+        offset = Decimal(-0.05)
 
         _, ax = plt.subplots(figsize=(figsize, figsize))
         ax.set_xlim(-limit, limit)
         ax.set_ylim(-limit, limit)
         ax.set_aspect("equal", adjustable="box")
         ax.grid(axis="both", alpha=0.2)
+
+        # Warnings
+        if show_order and show_values:
+            warnings.warn(
+                "Both show_order and show_values arguments are set to True. Plot may not be correctly displayed."
+            )
 
         # Lines
         if show_lines:
@@ -452,10 +511,15 @@ class PolygonSolver:
             for pt in self.adjacency_list:
                 plt.annotate(pt.value(self), (pt.x + offset, pt.y + offset))
 
+        # Order
+        if show_order:
+            for pt in self.adjacency_list:
+                plt.annotate(pt.order(self), (pt.x + offset, pt.y + offset))
+
     def check_intersections(self, adjacency_list: dict[Point, set[Point]]) -> None:
         """
-        Returns the total number of intersections for an even regular n-sided polygon.
-        Formula from https://www.math.uwaterloo.ca/~mrubinst/publications/ngon.pdf
+        Returns the theoretical number of nodes in regular n-gon with all diagonals drawn
+        Reference: https://oeis.org/A007569
 
         Raises:
             AssertionError: The number of generated points does not equal the expected
@@ -534,12 +598,14 @@ class PolygonSolver:
 
 @fn_timer
 def main(n: int) -> PolygonSolver:
-    polygon_solver = PolygonSolver(n=n, plot=False, figsize=20, show_values=False)
+    polygon_solver = PolygonSolver(
+        n=n, plot=True, figsize=20, show_values=False, show_order=True
+    )
     result = polygon_solver.result()
     polygon_solver.save_result(result, "results.json")
     return polygon_solver
 
 
 if __name__ == "__main__":
-    solver = main(54)
-    solver.write_adjacency_list_keys_to_disk("adjacency_list.json")
+    solver = main(6)
+    # solver.write_adjacency_list_keys_to_disk("adjacency_list.json")
