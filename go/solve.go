@@ -346,7 +346,7 @@ func p(x, y int) int {
 	return int(math.Pow(float64(x), float64(y)))
 }
 
-func (ps PolygonSolver) GetTheoreticalTotalPoints() int {
+func (ps PolygonSolver) GetTheoreticalNodes() int {
 	// Returns the theoretical number of nodes in regular n-gon with all diagonals drawn
 	// Reference: https://oeis.org/A007569
 	n := ps.N
@@ -369,11 +369,11 @@ func (ps PolygonSolver) GetTheoreticalTotalPoints() int {
 	return interior + n
 }
 
-func (ps PolygonSolver) CheckIntersections(adjacencyList AdjacencyList) error {
-	// Checks that the total number of generated points are correct
-	total := ps.GetTheoreticalTotalPoints()
+func (ps PolygonSolver) CheckNodes(adjacencyList AdjacencyList) error {
+	// Checks that the total number of generated nodes are correct
+	total := ps.GetTheoreticalNodes()
 	if total != len(adjacencyList) {
-		return fmt.Errorf("expected %d points, got %d points", total, len(adjacencyList))
+		return fmt.Errorf("expected %d nodes, got %d nodes", total, len(adjacencyList))
 	}
 	return nil
 }
@@ -401,27 +401,28 @@ func (ps PolygonSolver) GetTheoreticalRegions() int {
 	return t0 + t2 + t4 + t6 + t12 + t18 + t24 + t30 + t42 + t60 + t84 + t90 + t120 + t210
 }
 
-func (ps PolygonSolver) GetTheoreticalLineSegments() int {
+func (ps PolygonSolver) GetTheoreticalEdges() int {
 	// Returns the theoretical number of line segments in regular n-gon with all diagonals drawn
 	// Reference: https://oeis.org/A135565
-	return ps.GetTheoreticalTotalPoints() + ps.GetTheoreticalRegions() - 1
+	return ps.GetTheoreticalNodes() + ps.GetTheoreticalRegions() - 1
 }
 
-func (ps PolygonSolver) CheckLineSegments(lineSegments LineSegments) error {
-	total := ps.GetTheoreticalLineSegments()
-	if total != len(lineSegments) {
-		return fmt.Errorf("expected %d line segments, got %d line segments", total, len(lineSegments))
+func (ps PolygonSolver) CheckEdges(edges LineSegments) error {
+	// Checks that the total number of generated edges are correct
+	total := ps.GetTheoreticalEdges()
+	if total != len(edges) {
+		return fmt.Errorf("expected %d edges, got %d edges", total, len(edges))
 	}
 	return nil
 }
 
-func (ps PolygonSolver) CheckAll(lineSegments LineSegments, adjacencyList AdjacencyList) error {
+func (ps PolygonSolver) CheckAll(edges LineSegments, adjacencyList AdjacencyList) error {
 	var err error
-	err = ps.CheckIntersections(adjacencyList)
+	err = ps.CheckNodes(adjacencyList)
 	if err != nil {
 		panic(err)
 	}
-	err = ps.CheckLineSegments(lineSegments)
+	err = ps.CheckEdges(edges)
 	if err != nil {
 		panic(err)
 	}
@@ -547,15 +548,15 @@ func (ps PolygonSolver) SaveAdjacencyListKeys(adjacencyList AdjacencyList, filen
 func run(p uint, t float64, n int) (big.Int, error) {
 	ps := PolygonSolver{n, p, t}
 	polygonVertices := ps.CreatePolygonVertices()
-	unbrokenLineSegments := ps.DrawLineSegments(polygonVertices)
-	lineToPoints := ps.MapLineSegmentsToPoints(unbrokenLineSegments)
-	lineSegments, adjacencyList, indegrees := ps.CreateGraph(lineToPoints)
+	lineSegments := ps.DrawLineSegments(polygonVertices)
+	lineToPoints := ps.MapLineSegmentsToPoints(lineSegments)
+	edges, adjacencyList, indegrees := ps.CreateGraph(lineToPoints)
 	order := ps.GetTopologicalOrdering(adjacencyList, indegrees)
 	dp := ps.Solve(adjacencyList, indegrees, order)
 	result := ps.Result(dp)
 	fmt.Println(result.String())
-	ps.SaveAdjacencyListKeys(adjacencyList, "adjacencyList.json")
-	err := ps.CheckAll(lineSegments, adjacencyList)
+	// ps.SaveAdjacencyListKeys(adjacencyList, "adjacencyList.json")
+	err := ps.CheckAll(edges, adjacencyList)
 	if err != nil {
 		return *big.NewInt(0), err
 	}
@@ -563,30 +564,28 @@ func run(p uint, t float64, n int) (big.Int, error) {
 	// ps.SaveResult(result, "results.json")
 }
 
-func GridSearch(n int) (uint, int) {
+func GridSearch(n int) {
 	// Find a combination of p and t that works for a given value of n
-	for p := uint(5); p < 20; p++ {
-		for k := 5; k < 20; k++ {
-			t := math.Pow10(-k)
-			result, err := run(p, t, n)
-			if err != nil || result.Cmp(big.NewInt(0)) == 0 {
-				continue
-			}
-			// If we reach here, we have found a working combination
-			return p, k
+	for p := uint(9); p < 20; p++ {
+		t := math.Pow10(-int(p))
+		result, err := run(p, t, n)
+		if err != nil || result.Cmp(big.NewInt(0)) == 0 {
+			continue
 		}
+		// If we reach here, we have found a working combination
+		// return p
+		fmt.Println(p)
 	}
-	return 0, 0
+	// return 0
 }
 
 func main() {
-	p, t := uint(6), math.Pow10(-5)
+	p, t := uint(7), math.Pow10(-7)
 	for i := 54; i < 100; i += 2 {
 		result, err := run(p, t, i)
 		if err != nil || result.Cmp(big.NewInt(0)) == 0 {
 			panic(err)
 		}
 	}
-	// p, k := GridSearch(60)
-	// fmt.Println(p, k)
+	// GridSearch(60)
 }

@@ -56,6 +56,10 @@ def zeroise(val: Decimal) -> Decimal:
     return val if abs(val) > TOLERANCE else ZERO
 
 
+def is_multiple(x: int, y: int) -> bool:
+    return x % y == 0
+
+
 class Point:
     """
     Point class that contains the coordinates of a given point.
@@ -243,14 +247,14 @@ class PolygonSolver:
         self.plot = plot
 
         self.polygon = self.create_regular_polygon(n)
-        self.line_segments, self.adjacency_list, self.indegrees = self.create_graph()
+        self.edges, self.adjacency_list, self.indegrees = self.create_graph()
         self.order = self.get_topological_ordering(self.adjacency_list, self.indegrees)
         self.point_ordering, self.graph = self.create_simple_graph(
             self.adjacency_list, self.order
         )
 
         # Checks that the generated number of interior points are correct
-        self.check_intersections(self.adjacency_list)
+        self.check_all(self.edges, self.adjacency_list)
 
         # Solve the graph
         self.dp = self.solve(self.adjacency_list, self.indegrees, self.order)
@@ -341,7 +345,7 @@ class PolygonSolver:
         """
         print(f"Creating graph for n={self.n}...")
 
-        line_segments: set[LineSegment] = set()
+        edges: set[LineSegment] = set()
         adjacency_list: dict[Point, set[Point]] = {}
         indegrees: dict[Point, int] = {}
 
@@ -361,7 +365,7 @@ class PolygonSolver:
             for previous, current in zip(sorted_points, sorted_points[1:]):
                 # Create line segment for each successive pair of points on the unbroken line segment
                 edge = LineSegment(previous, current)
-                line_segments.add(edge)
+                edges.add(edge)
 
                 # Standardise first and second
                 first, second = (current, previous)
@@ -372,7 +376,7 @@ class PolygonSolver:
                 adjacency_list[first].add(second)
                 indegrees[second] += 1
 
-        return line_segments, adjacency_list, indegrees
+        return edges, adjacency_list, indegrees
 
     def create_simple_graph(
         self, adjacency_list: dict[Point, set[Point]], topological_order: list[Point]
@@ -485,7 +489,7 @@ class PolygonSolver:
 
         # Lines
         if show_lines:
-            for line in self.line_segments:
+            for line in self.edges:
                 color = next(
                     ax._get_lines.prop_cycler  # pylint: disable=protected-access
                 )["color"]
@@ -516,20 +520,11 @@ class PolygonSolver:
             for pt in self.adjacency_list:
                 plt.annotate(pt.order(self), (pt.x + offset, pt.y + offset))
 
-    def check_intersections(self, adjacency_list: dict[Point, set[Point]]) -> None:
+    def get_theoretical_nodes(self) -> int:
         """
-        Returns the theoretical number of nodes in regular n-gon with all diagonals drawn
+        Returns the theoretical number of nodes in regular n-gon with all diagonals drawn.
         Reference: https://oeis.org/A007569
-
-        Raises:
-            AssertionError: The number of generated points does not equal the expected
-                theoretical number of points.
         """
-        print("Checking number of intersection points...")
-
-        def is_multiple(x: int, y: int) -> bool:
-            return x % y == 0
-
         n = self.n
         d = is_multiple
         interior = (
@@ -548,13 +543,89 @@ class PolygonSolver:
             - 144 * n * d(n, 120)
             - 96 * n * d(n, 210)
         )
+        return int(interior) + n
 
-        print(f"n = {n}, total number of points = {len(adjacency_list)}")
-        if self.n + interior != len(adjacency_list):
-            diff = len(adjacency_list) - int(self.n) - int(interior)
-            raise AssertionError(
-                f"Expected {int(self.n + interior)} points, got {len(adjacency_list)} points. Difference of {diff}."
+    def check_nodes(self, adjacency_list: dict[Point, set[Point]]) -> None:
+        """
+        Checks that the total number of generated nodes are correct.
+
+        Args:
+            adjacency_list (dict[Point, set[Point]]): Adjacency list representation of the graph
+
+        Raises:
+            ValueError: If the generated and theoretical values do not match
+        """
+        print("Checking number of intersection points...")
+        nodes = self.get_theoretical_nodes()
+
+        if nodes != len(adjacency_list):
+            diff = len(adjacency_list) - nodes
+            raise ValueError(
+                f"Expected {nodes} nodes, got {len(adjacency_list)} nodes. Difference of {diff}."
             )
+        print(f"Total number of points = {len(adjacency_list)}")
+
+    def get_theoretical_regions(self) -> int:
+        """
+        Returns the theoretical number of regions in regular n-gon with all diagonals drawn.
+        Reference: https://oeis.org/A007678
+        """
+        n = self.n
+        d = is_multiple
+
+        regions = (
+            (
+                ((n**4) - 6 * (n**3) + 23 * (n**2) - 42 * n + 24) / 24
+                + (-5 * (n**3) + 42 * (n**2) - 40 * n - 48) / 48 * d(n, 2)
+                - 3 * n / 4 * d(n, 4)
+                + (-53 * (n**2) + 310 * n) / 12 * d(n, 6)
+            )
+            + 49 * n / 2 * d(n, 12)
+            + 32 * n * d(n, 18)
+            + 19 * n * d(n, 24)
+            - 36 * n * d(n, 30)
+            - 50 * n * d(n, 42)
+            - 190 * n * d(n, 60)
+            - 78 * n * d(n, 84)
+            - 48 * n * d(n, 90)
+            - 78 * n * d(n, 120)
+            - 48 * n * d(n, 210)
+        )
+        return int(regions)
+
+    def get_theoretical_edges(self) -> int:
+        """
+        Returns the theoretical number of line segments in regular n-gon with all diagonals drawn.
+        Reference: https://oeis.org/A135565
+        """
+        return self.get_theoretical_nodes() + self.get_theoretical_regions() - 1
+
+    def check_edges(self, edges: set[LineSegment]) -> None:
+        """
+        Checks that the total number of generated edges are correct.
+
+        Args:
+            edges (set[LineSegment]): Edges of the graph
+
+        Raises:
+            ValueError: If the generated and theoretical values do not match
+        """
+        total = self.get_theoretical_edges()
+        if total != len(edges):
+            raise ValueError(f"expected {total} edges, got {len(edges)} edges")
+
+    def check_all(
+        self, edges: set[LineSegment], adjacency_list: dict[Point, set[Point]]
+    ) -> None:
+        """
+        Runs all runtime checks to ensure validity of the generated graph.
+
+        Args:
+            edges (set[LineSegment]): Graph edges
+            adjacency_list (dict[Point, set[Point]]): Adjacency list representation of the graph
+        """
+        self.check_nodes(adjacency_list)
+        self.check_edges(edges)
 
     def save_result(self, result: int, filename: str) -> None:
         """
