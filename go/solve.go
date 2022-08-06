@@ -429,6 +429,27 @@ func (ps PolygonSolver) CheckAll(edges LineSegments, adjacencyList AdjacencyList
 	return nil
 }
 
+func (ps PolygonSolver) CreateSimpleGraph(adjacencyList AdjacencyList, topologicalOrder []PointString) (map[PointString]int, map[int]map[int]bool) {
+	// Returns the simplified adjacency list that labels each node with their topological order
+	// from 0 to n-1, 0 being the start point and n-1 being the end point.
+
+	// Map point to their respective index in the topological order list
+	pointOrdering := make(map[PointString]int)
+	for i, point := range topologicalOrder {
+		pointOrdering[point] = i
+	}
+
+	graph := make(map[int]map[int]bool)
+	for k, v := range adjacencyList {
+		downstream := make(map[int]bool)
+		for pointStr := range v {
+			downstream[pointOrdering[pointStr]] = true
+		}
+		graph[pointOrdering[k]] = downstream
+	}
+	return pointOrdering, graph
+}
+
 func (ps PolygonSolver) GetTopologicalOrdering(adjacencyList AdjacencyList, indegrees Indegrees) []PointString {
 	// Returns the topological order of the graph
 	fmt.Println("Getting topological order...")

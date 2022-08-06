@@ -257,7 +257,7 @@ class PolygonSolver:
         self.check_all(self.edges, self.adjacency_list)
 
         # Solve the graph
-        self.dp = self.solve(self.adjacency_list, self.indegrees, self.order)
+        self.dp = self.solve(self.adjacency_list, self.order)
 
         if self.plot:
             if n > 30:
@@ -344,7 +344,6 @@ class PolygonSolver:
         2. Adding the points to the adjacency list
         """
         print(f"Creating graph for n={self.n}...")
-
         edges: set[LineSegment] = set()
         adjacency_list: dict[Point, set[Point]] = {}
         indegrees: dict[Point, int] = {}
@@ -378,29 +377,6 @@ class PolygonSolver:
 
         return edges, adjacency_list, indegrees
 
-    def create_simple_graph(
-        self, adjacency_list: dict[Point, set[Point]], topological_order: list[Point]
-    ) -> tuple[dict[Point, int], dict[int, set[int]]]:
-        """
-        Returns the simplified adjacency list that labels each node with their topological order
-        from 0 to n-1, 0 being the start point and n-1 being the end point.
-
-        Args:
-            adjacency_list (dict[Point, set[Point]]): _description_
-
-        Returns:
-            dict[int, set[int]]: _description_
-        """
-        # Map point to their respective index in the topological order list
-        point_ordering: dict[Point, int] = {}
-        for i, point in enumerate(topological_order):
-            point_ordering[point] = i
-
-        graph: dict[int, set[int]] = {}
-        for k, v in adjacency_list.items():
-            graph[point_ordering[k]] = set(point_ordering[item] for item in v)
-        return point_ordering, graph
-
     def get_topological_ordering(
         self, adjacency_list: dict[Point, set[Point]], indegrees: dict[Point, int]
     ) -> list[Point]:
@@ -431,10 +407,29 @@ class PolygonSolver:
         print("Topological ordering complete.")
         return order
 
+    def create_simple_graph(
+        self, adjacency_list: dict[Point, set[Point]], topological_order: list[Point]
+    ) -> tuple[dict[Point, int], dict[int, set[int]]]:
+        """
+        Returns the simplified adjacency list that labels each node with their topological order
+        from 0 to n-1, 0 being the start point and n-1 being the end point.
+
+        Args:
+            adjacency_list (dict[Point, set[Point]]): Adjacency list representation of the graph
+        """
+        # Map point to their respective index in the topological order list
+        point_ordering: dict[Point, int] = {}
+        for i, point in enumerate(topological_order):
+            point_ordering[point] = i
+
+        graph: dict[int, set[int]] = {}
+        for k, v in adjacency_list.items():
+            graph[point_ordering[k]] = set(point_ordering[item] for item in v)
+        return point_ordering, graph
+
     def solve(
         self,
         adjacency_list: dict[Point, set[Point]],
-        indegrees: dict[Point, int],
         topological_order: list[Point],
     ) -> dict[Point, int]:
         """
@@ -442,12 +437,10 @@ class PolygonSolver:
         1. Topologically sorting the nodes in the graph
         2. Calculating the value of nodes by looking up previously calculated values
         """
-
         dp = {node: 0 for node in adjacency_list}
         dp[Point(*START)] = 1
 
         print("Summing over the graph...")
-
         for node in tqdm(topological_order):
             for nb in self.adjacency_list[node]:
                 dp[nb] += dp[node]
