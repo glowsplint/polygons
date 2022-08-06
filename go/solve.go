@@ -141,7 +141,6 @@ func (ls *LineSegment) Direction() bool {
 // Types
 type LineToPoints map[LineSegmentString]map[PointString]Point
 type PointString string
-type LineSegments map[LineSegmentString]bool
 type AdjacencyList map[PointString]map[PointString]bool
 type Indegrees map[PointString]int
 
@@ -287,13 +286,12 @@ func (ps PolygonSolver) MapLineSegmentsToPoints(lineSegments []LineSegment) Line
 	return result
 }
 
-func (ps PolygonSolver) CreateGraph(lineToPoints LineToPoints) (LineSegments, AdjacencyList, Indegrees) {
+func (ps PolygonSolver) CreateGraph(lineToPoints LineToPoints) (int, AdjacencyList, Indegrees) {
 	// Creates the adjacency list of the graph by:
 	// 1. Creating all the smaller line segments that make up the edges of the graph
 	// 2. Adding the points to the adjacency list
 	fmt.Printf("Creating graph for n=%d...\n", ps.N)
 
-	lineSegments := make(LineSegments)
 	adjacencyList := make(AdjacencyList)
 	indegrees := make(map[PointString]int)
 
@@ -318,7 +316,6 @@ func (ps PolygonSolver) CreateGraph(lineToPoints LineToPoints) (LineSegments, Ad
 
 			// Create line segment for each successive pair of points on the unbroken line segment
 			edge := LineSegment{previous, current}
-			lineSegments[edge.StringFixed(ps.Precision)] = true
 
 			// Standardise first and second
 			first := current.StringFixed(ps.Precision)
@@ -333,7 +330,12 @@ func (ps PolygonSolver) CreateGraph(lineToPoints LineToPoints) (LineSegments, Ad
 		}
 	}
 
-	return lineSegments, adjacencyList, indegrees
+	nEdges := 0
+	for _, v := range adjacencyList {
+		nEdges += len(v)
+	}
+
+	return nEdges, adjacencyList, indegrees
 }
 
 func d(x, y int) int {
@@ -407,35 +409,35 @@ func (ps PolygonSolver) GetTheoreticalEdges() int {
 	return ps.GetTheoreticalNodes() + ps.GetTheoreticalRegions() - 1
 }
 
-func (ps PolygonSolver) CheckEdges(edges LineSegments) error {
+func (ps PolygonSolver) CheckEdges(nEdges int) error {
 	// Checks that the total number of generated edges are correct
 	total := ps.GetTheoreticalEdges()
-	if total != len(edges) {
-		return fmt.Errorf("expected %d edges, got %d edges", total, len(edges))
+	if total != nEdges {
+		return fmt.Errorf("expected %d edges, got %d edges", total, nEdges)
 	}
 	return nil
 }
 
-func (ps PolygonSolver) CheckAll(edges LineSegments, adjacencyList AdjacencyList) error {
+func (ps PolygonSolver) CheckAll(nEdges int, adjacencyList AdjacencyList) error {
 	var err error
 	err = ps.CheckNodes(adjacencyList)
 	if err != nil {
 		panic(err)
 	}
-	err = ps.CheckEdges(edges)
+	err = ps.CheckEdges(nEdges)
 	if err != nil {
 		panic(err)
 	}
 	return nil
 }
 
-func (ps PolygonSolver) CreateSimpleGraph(adjacencyList AdjacencyList, topologicalOrder []PointString) (map[PointString]int, map[int]map[int]bool) {
+func (ps PolygonSolver) CreateSimpleGraph(adjacencyList AdjacencyList, order []PointString) (map[PointString]int, map[int]map[int]bool) {
 	// Returns the simplified adjacency list that labels each node with their topological order
 	// from 0 to n-1, 0 being the start point and n-1 being the end point.
 
 	// Map point to their respective index in the topological order list
 	pointOrdering := make(map[PointString]int)
-	for i, point := range topologicalOrder {
+	for i, point := range order {
 		pointOrdering[point] = i
 	}
 
@@ -514,7 +516,7 @@ func (ps PolygonSolver) Result(dp map[PointString]big.Int) big.Int {
 
 func (ps PolygonSolver) SaveResult(result big.Int, filename string) {
 	// Saves the obtained result to disk.
-	// Raises an exception if the current results file has a different value.
+	// Panics if the current results file has a different value.
 	jsonFile, err := os.Open(filename)
 	if err != nil {
 		fmt.Println(err)
@@ -523,25 +525,26 @@ func (ps PolygonSolver) SaveResult(result big.Int, filename string) {
 
 	byteValue, _ := io.ReadAll(jsonFile)
 
-	parsedItem := make(map[string]string)
+	parsedItem := make(map[int]string)
 	json.Unmarshal([]byte(byteValue), &parsedItem)
 
 	// Check that the entry is the same
-	s := strconv.Itoa(ps.N)
-	extracted_result, ok := parsedItem[s]
+	extracted_result, ok := parsedItem[ps.N]
 
-	if !ok {
-		parsedItem[s] = result.String()
+	if ok {
+		if extracted_result != result.String() {
+			err = fmt.Errorf("the calculated value for n=%v does not equal the existing value", ps.N)
+			panic(err)
+		}
+		fmt.Println("Calculated result matches existing result.")
+	} else {
+		parsedItem[ps.N] = result.String()
 		jsonStr, err := json.MarshalIndent(parsedItem, "", "")
 		if err != nil {
 			panic(err)
 		}
 		os.WriteFile(filename, jsonStr, 0644)
-	} else if extracted_result != result.String() {
-		err = fmt.Errorf("the calculated value for n=%v does not equal the existing value", ps.N)
-		panic(err)
 	}
-	fmt.Println("Calculated result matches existing result.")
 }
 
 func (ps PolygonSolver) SaveAdjacencyListKeys(adjacencyList AdjacencyList, filename string) {
@@ -571,18 +574,18 @@ func run(p uint, t float64, n int) (big.Int, error) {
 	polygonVertices := ps.CreatePolygonVertices()
 	lineSegments := ps.DrawLineSegments(polygonVertices)
 	lineToPoints := ps.MapLineSegmentsToPoints(lineSegments)
-	edges, adjacencyList, indegrees := ps.CreateGraph(lineToPoints)
+	nEdges, adjacencyList, indegrees := ps.CreateGraph(lineToPoints)
 	order := ps.GetTopologicalOrdering(adjacencyList, indegrees)
 	dp := ps.Solve(adjacencyList, indegrees, order)
 	result := ps.Result(dp)
 	fmt.Println(result.String())
 	// ps.SaveAdjacencyListKeys(adjacencyList, "adjacencyList.json")
-	err := ps.CheckAll(edges, adjacencyList)
+	err := ps.CheckAll(nEdges, adjacencyList)
 	if err != nil {
 		return *big.NewInt(0), err
 	}
+	ps.SaveResult(result, "results.json")
 	return result, nil
-	// ps.SaveResult(result, "results.json")
 }
 
 func GridSearch(n int) {
@@ -602,7 +605,7 @@ func GridSearch(n int) {
 
 func main() {
 	p, t := uint(7), math.Pow10(-7)
-	for i := 54; i < 100; i += 2 {
+	for i := 4; i < 60; i += 2 {
 		result, err := run(p, t, i)
 		if err != nil || result.Cmp(big.NewInt(0)) == 0 {
 			panic(err)
