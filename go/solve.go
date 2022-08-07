@@ -143,6 +143,7 @@ type LineToPoints map[LineSegmentString]map[PointString]Point
 type PointString string
 type AdjacencyList map[PointString]map[PointString]bool
 type Indegrees map[PointString]int
+type SimpleAdjacencyList map[int]map[int]bool
 
 // To allow sorting of points
 type ByXY []Point
@@ -330,9 +331,18 @@ func (ps PolygonSolver) CreateGraph(lineToPoints LineToPoints) (int, AdjacencyLi
 		}
 	}
 
+	// Check that the destination nodes exist as a key in the adjacency list
+	// TODO: This check will not be required if we only use CreateSimpleGraph
 	nEdges := 0
-	for _, v := range adjacencyList {
-		nEdges += len(v)
+	for _, pts := range adjacencyList {
+		for p := range pts {
+			_, ok := adjacencyList[p]
+			if !ok {
+				err := fmt.Errorf("unmatched node found in adjacency destination but not source")
+				panic(err)
+			}
+		}
+		nEdges += len(pts)
 	}
 
 	return nEdges, adjacencyList, indegrees
@@ -371,11 +381,11 @@ func (ps PolygonSolver) GetTheoreticalNodes() int {
 	return interior + n
 }
 
-func (ps PolygonSolver) CheckNodes(adjacencyList AdjacencyList) error {
+func (ps PolygonSolver) CheckNodes(a AdjacencyList) error {
 	// Checks that the total number of generated nodes are correct
 	total := ps.GetTheoreticalNodes()
-	if total != len(adjacencyList) {
-		return fmt.Errorf("expected %d nodes, got %d nodes", total, len(adjacencyList))
+	if total != len(a) {
+		return fmt.Errorf("expected %d nodes, got %d nodes", total, len(a))
 	}
 	return nil
 }
@@ -418,9 +428,9 @@ func (ps PolygonSolver) CheckEdges(nEdges int) error {
 	return nil
 }
 
-func (ps PolygonSolver) CheckAll(nEdges int, adjacencyList AdjacencyList) error {
+func (ps PolygonSolver) CheckAll(nEdges int, a AdjacencyList) error {
 	var err error
-	err = ps.CheckNodes(adjacencyList)
+	err = ps.CheckNodes(a)
 	if err != nil {
 		panic(err)
 	}
@@ -431,7 +441,45 @@ func (ps PolygonSolver) CheckAll(nEdges int, adjacencyList AdjacencyList) error 
 	return nil
 }
 
-func (ps PolygonSolver) CreateSimpleGraph(adjacencyList AdjacencyList, order []PointString) (map[PointString]int, map[int]map[int]bool) {
+func (ps PolygonSolver) CheckNodesSimple(g SimpleAdjacencyList) error {
+	// Checks that the total number of generated nodes are correct
+	want := ps.GetTheoreticalNodes()
+	got := len(g)
+	if want != got {
+		return fmt.Errorf("expected %d nodes, got %d nodes", want, got)
+	}
+	return nil
+}
+
+func (ps PolygonSolver) CheckEdgesSimple(g SimpleAdjacencyList) error {
+	// Checks that the total number of generated edges are correct
+	want := ps.GetTheoreticalEdges()
+	got := 0
+	for _, v := range g {
+		got += len(v)
+	}
+
+	if want != got {
+		return fmt.Errorf("expected %d edges, got %d edges", want, got)
+	}
+	return nil
+
+}
+
+func (ps PolygonSolver) CheckAllSimple(g SimpleAdjacencyList) error {
+	var err error
+	err = ps.CheckNodesSimple(g)
+	if err != nil {
+		panic(err)
+	}
+	err = ps.CheckEdgesSimple(g)
+	if err != nil {
+		panic(err)
+	}
+	return nil
+}
+
+func (ps PolygonSolver) CreateSimpleGraph(a AdjacencyList, order []PointString) SimpleAdjacencyList {
 	// Returns the simplified adjacency list that labels each node with their topological order
 	// from 0 to n-1, 0 being the start point and n-1 being the end point.
 
@@ -442,28 +490,28 @@ func (ps PolygonSolver) CreateSimpleGraph(adjacencyList AdjacencyList, order []P
 	}
 
 	graph := make(map[int]map[int]bool)
-	for k, v := range adjacencyList {
+	for k, v := range a {
 		downstream := make(map[int]bool)
 		for pointStr := range v {
 			downstream[pointOrdering[pointStr]] = true
 		}
 		graph[pointOrdering[k]] = downstream
 	}
-	return pointOrdering, graph
+	return graph
 }
 
-func (ps PolygonSolver) GetTopologicalOrdering(adjacencyList AdjacencyList, indegrees Indegrees) []PointString {
+func (ps PolygonSolver) GetTopologicalOrdering(a AdjacencyList, i Indegrees) []PointString {
 	// Returns the topological order of the graph
 	fmt.Println("Getting topological order...")
 	var queue deque.Deque[PointString]
 
 	// Make copies of arguments
 	adjacencyListCopy := make(AdjacencyList)
-	for k, v := range adjacencyList {
+	for k, v := range a {
 		adjacencyListCopy[k] = v
 	}
 	indegreesCopy := make(Indegrees)
-	for k, v := range indegrees {
+	for k, v := range i {
 		indegreesCopy[k] = v
 	}
 
@@ -488,21 +536,17 @@ func (ps PolygonSolver) GetTopologicalOrdering(adjacencyList AdjacencyList, inde
 	return order
 }
 
-func (ps PolygonSolver) Solve(adjacencyList AdjacencyList, indegrees Indegrees, order []PointString) map[PointString]big.Int {
-	// Solves the polygons problem progressively (via bottom-up dynamic programming) by:
-	// 1. Topologically sorting the nodes in the graph
-	// 2. Calculating the value of nodes by looking up previously calculated values
+func (ps PolygonSolver) Solve(a AdjacencyList, i Indegrees, order []PointString) map[PointString]big.Int {
+	// Solves the polygons problem via bottom-up dynamic programming by calculating the value of nodes
+	// in topological order by looking up previously calculated values
 
 	// Initialise the bottom-up dynamic programming map
 	dp := make(map[PointString]big.Int)
-	for node := range adjacencyList {
-		dp[node] = *big.NewInt(0)
-	}
 	dp[START.StringFixed(ps.Precision)] = *big.NewInt(1)
 
 	fmt.Println("Summing over the graph...")
 	for _, node := range order {
-		for nb := range adjacencyList[node] {
+		for nb := range a[node] {
 			a, b := dp[nb], dp[node]
 			dp[nb] = *new(big.Int).Add(&a, &b)
 		}
@@ -510,8 +554,30 @@ func (ps PolygonSolver) Solve(adjacencyList AdjacencyList, indegrees Indegrees, 
 	return dp
 }
 
+func (ps PolygonSolver) SolveSimple(s SimpleAdjacencyList) []big.Int {
+	// Solves the polygons problem via bottom-up dynamic programming by calculating the value of nodes
+	// in topological order by looking up previously calculated values
+
+	// Initialise the bottom-up dynamic programming slice
+	dp := make([]big.Int, len(s))
+	dp[0] = *big.NewInt(1)
+
+	fmt.Println("Summing over the graph...")
+	for i := 0; i < len(dp); i++ {
+		for v := range s[i] {
+			a, b := dp[v], dp[i]
+			dp[v] = *new(big.Int).Add(&a, &b)
+		}
+	}
+	return dp
+}
+
 func (ps PolygonSolver) Result(dp map[PointString]big.Int) big.Int {
 	return dp[END.StringFixed(ps.Precision)]
+}
+
+func (ps PolygonSolver) ResultSimple(dp []big.Int) big.Int {
+	return dp[len(dp)-1]
 }
 
 func (ps PolygonSolver) SaveResult(result big.Int, filename string) {
@@ -547,7 +613,7 @@ func (ps PolygonSolver) SaveResult(result big.Int, filename string) {
 	}
 }
 
-func (ps PolygonSolver) SaveAdjacencyListKeys(adjacencyList AdjacencyList, filename string) {
+func (ps PolygonSolver) SaveAdjacencyListKeys(a AdjacencyList, filename string) {
 	fmt.Printf("Writing to %v...\n", filename)
 	jsonFile, err := os.Open(filename)
 	if err != nil {
@@ -557,7 +623,7 @@ func (ps PolygonSolver) SaveAdjacencyListKeys(adjacencyList AdjacencyList, filen
 
 	// Create slice of keys
 	adjacencyListKeys := make([]PointString, 0)
-	for k := range adjacencyList {
+	for k := range a {
 		adjacencyListKeys = append(adjacencyListKeys, k)
 	}
 
@@ -569,7 +635,7 @@ func (ps PolygonSolver) SaveAdjacencyListKeys(adjacencyList AdjacencyList, filen
 	os.WriteFile(filename, jsonStr, 0644)
 }
 
-func run(p uint, t float64, n int) (big.Int, error) {
+func Run(p uint, t float64, n int) (big.Int, error) {
 	ps := PolygonSolver{n, p, t}
 	polygonVertices := ps.CreatePolygonVertices()
 	lineSegments := ps.DrawLineSegments(polygonVertices)
@@ -579,8 +645,30 @@ func run(p uint, t float64, n int) (big.Int, error) {
 	dp := ps.Solve(adjacencyList, indegrees, order)
 	result := ps.Result(dp)
 	fmt.Println(result.String())
-	// ps.SaveAdjacencyListKeys(adjacencyList, "adjacencyList.json")
 	err := ps.CheckAll(nEdges, adjacencyList)
+	if err != nil {
+		return *big.NewInt(0), err
+	}
+	ps.SaveResult(result, "results.json")
+	return result, nil
+}
+
+func RunSimple(p uint, t float64, n int) (big.Int, error) {
+	// Creating the simplified graph runs additional checks to ensure that:
+	// 1. The total number of nodes are correct
+	// 2. The total number of edges are correct
+	// 3. The downstream nodes all exist within the simplified graph
+	ps := PolygonSolver{n, p, t}
+	polygonVertices := ps.CreatePolygonVertices()
+	lineSegments := ps.DrawLineSegments(polygonVertices)
+	lineToPoints := ps.MapLineSegmentsToPoints(lineSegments)
+	_, adjacencyList, indegrees := ps.CreateGraph(lineToPoints)
+	order := ps.GetTopologicalOrdering(adjacencyList, indegrees)
+	graph := ps.CreateSimpleGraph(adjacencyList, order)
+	dp := ps.SolveSimple(graph)
+	result := ps.ResultSimple(dp)
+	fmt.Println(result.String())
+	err := ps.CheckAllSimple(graph)
 	if err != nil {
 		return *big.NewInt(0), err
 	}
@@ -592,7 +680,7 @@ func GridSearch(n int) {
 	// Find a combination of p and t that works for a given value of n
 	for p := uint(9); p < 20; p++ {
 		t := math.Pow10(-int(p))
-		result, err := run(p, t, n)
+		result, err := Run(p, t, n)
 		if err != nil || result.Cmp(big.NewInt(0)) == 0 {
 			continue
 		}
@@ -604,9 +692,9 @@ func GridSearch(n int) {
 }
 
 func main() {
-	p, t := uint(7), math.Pow10(-7)
+	p, t := uint(10), math.Pow10(-10)
 	for i := 4; i < 60; i += 2 {
-		result, err := run(p, t, i)
+		result, err := Run(p, t, i)
 		if err != nil || result.Cmp(big.NewInt(0)) == 0 {
 			panic(err)
 		}

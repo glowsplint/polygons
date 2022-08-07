@@ -252,7 +252,7 @@ func TestMapLineToPoints4(t *testing.T) {
 func TestGetTheoreticalTotalPoints(t *testing.T) {
 	for _, testCase := range polygonTestCases {
 		ps := PolygonSolver{testCase.N, precision, tolerance}
-		got, want := ps.GetTheoreticalTotalPoints(), testCase.TotalPoints
+		got, want := ps.GetTheoreticalNodes(), testCase.TotalPoints
 
 		if got != want {
 			t.Errorf("got = %v, \nwant = %v", got, want)
