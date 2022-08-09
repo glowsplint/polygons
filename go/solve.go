@@ -10,26 +10,54 @@ import (
 	"os"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 
 	deque "github.com/gammazero/deque"
+	dec "github.com/shopspring/decimal"
 	combin "gonum.org/v1/gonum/stat/combin"
 )
 
 // Constants
-var END Point = Point{-1, 0}
-var START Point = Point{1, 0}
+var ZERO dec.Decimal = dec.NewFromInt(0)
+var ONE dec.Decimal = dec.NewFromInt(1)
+var TWO dec.Decimal = dec.NewFromInt(2)
+var END Point = Point{ONE.Neg(), ZERO}
+var START Point = Point{ONE, ZERO}
 
-// Point definition
-type Point struct {
-	X float64 `json:"x"`
-	Y float64 `json:"y"`
+func Sqrt(d dec.Decimal, precision uint) dec.Decimal {
+	guess := d.Div(dec.NewFromInt(2))
+	if guess.LessThanOrEqual(ONE) {
+		guess = ONE
+	}
+	result := guess
+	for i := uint(0); i < precision; i++ {
+		num := result.Mul(result).Sub(d)
+		denom := TWO.Mul(result)
+		result = result.Sub(num.Div(denom))
+	}
+	return result.Truncate(int32(precision))
 }
 
-func roundFloat(val float64, precision uint) float64 {
-	ratio := math.Pow(10, float64(precision))
-	return math.Round(val*ratio) / ratio
+func zeroise(a, tolerance dec.Decimal) dec.Decimal {
+	if almostEqual(a, ZERO, tolerance) {
+		a = ZERO
+	}
+	return a
+}
+
+func almostEqual(a, b, tolerance dec.Decimal) bool {
+	return a.Sub(b).Abs().LessThan(tolerance)
+}
+
+func isInBetween(left, x, right dec.Decimal) bool {
+	return left.LessThanOrEqual(x) && x.LessThanOrEqual(right)
+}
+
+// Point definition
+// Defines a Point struct that contains the x and y coordinates of a given point
+type Point struct {
+	X dec.Decimal `json:"x"`
+	Y dec.Decimal `json:"y"`
 }
 
 func (p Point) String() string {
@@ -37,16 +65,15 @@ func (p Point) String() string {
 }
 
 func (p Point) StringFixed(places uint) PointString {
-	x := roundFloat(p.X, places)
-	y := roundFloat(p.Y, places)
-	fX := strconv.FormatFloat(x, 'f', int(places), 64)
-	fY := strconv.FormatFloat(y, 'f', int(places), 64)
-	return PointString(fmt.Sprintf("(%v,%v)", fX, fY))
+	intPlaces := int32(places)
+	sX := p.X.StringFixed(intPlaces)
+	sY := p.Y.StringFixed(intPlaces)
+	return PointString(fmt.Sprintf("(%v,%v)", sX, sY))
 }
 
-func (p Point) ReducedPrecision(precision uint, tolerance float64) Point {
-	x := zeroise(roundFloat(p.X, precision), tolerance)
-	y := zeroise(roundFloat(p.Y, precision), tolerance)
+func (p Point) ReducedPrecision(precision uint, tolerance dec.Decimal) Point {
+	x := zeroise(p.X.Round(int32(precision)), tolerance)
+	y := zeroise(p.Y.Round(int32(precision)), tolerance)
 	return Point{x, y}
 }
 
@@ -55,49 +82,41 @@ func NewFromPointString(s string) (Point, error) {
 	var pt Point
 	reX := regexp.MustCompile(`\((.*),`)
 	reY := regexp.MustCompile(`,(.*)\)`)
-	x, err := strconv.ParseFloat(reX.FindStringSubmatch(s)[1], 64)
+	x, err := dec.NewFromString(reX.FindStringSubmatch(s)[1])
 	if err != nil {
 		return pt, err
 	}
-	y, err := strconv.ParseFloat(reY.FindStringSubmatch(s)[1], 64)
+	y, err := dec.NewFromString(reY.FindStringSubmatch(s)[1])
 	if err != nil {
 		return pt, err
 	}
 	return Point{x, y}, nil
 }
 
-func zeroise(a float64, tolerance float64) float64 {
-	if almostEqual(a, 0, tolerance) {
-		a = 0
-	}
-	return a
-}
-
-func NewFromIntersection(L1, L2 LineSegment, precision uint, tolerance float64) (Point, error) {
+func NewFromIntersection(L1, L2 LineSegment, precision uint, tolerance dec.Decimal) (Point, error) {
 	// Constructor for Point via the intersection of two line segments
-	a1 := L1.P2.X - L1.P1.X
-	b1 := L2.P1.X - L2.P2.X
-	c1 := L2.P1.X - L1.P1.X
-	a2 := L1.P2.Y - L1.P1.Y
-	b2 := L2.P1.Y - L2.P2.Y
-	c2 := L2.P1.Y - L1.P1.Y
+	a1 := L1.P2.X.Sub(L1.P1.X)
+	b1 := L2.P1.X.Sub(L2.P2.X)
+	c1 := L2.P1.X.Sub(L1.P1.X)
+	a2 := L1.P2.Y.Sub(L1.P1.Y)
+	b2 := L2.P1.Y.Sub(L2.P2.Y)
+	c2 := L2.P1.Y.Sub(L1.P1.Y)
 
-	d := a1*b2 - b1*a2
-	dX := c1*b2 - b1*c2
-	dY := a1*c2 - c1*a2
+	d := a1.Mul(b2).Sub(b1.Mul(a2))
+	dX := c1.Mul(b2).Sub(b1.Mul(c2))
+	dY := a1.Mul(c2).Sub(c1.Mul(a2))
 
 	var pt Point
-	s := dX / d
-	t := dY / d
+	s := dX.Div(d)
+	t := dY.Div(d)
 
-	if !almostEqual(d, 0, tolerance) && (isInBetween(0, s, 1) && isInBetween(0, t, 1)) {
-		x := (1-s)*L1.P1.X + s*L1.P2.X
-		y := (1-s)*L1.P1.Y + s*L1.P2.Y
+	if !almostEqual(d, ZERO, tolerance) && (isInBetween(ZERO, s, ONE) && isInBetween(ZERO, t, ONE)) {
+		x := (ONE.Sub(s)).Mul(L1.P1.X).Add(s.Mul(L1.P2.X))
+		y := (ONE.Sub(s)).Mul(L1.P1.Y).Add(s.Mul(L1.P2.Y))
 		x = zeroise(x, tolerance)
 		y = zeroise(y, tolerance)
 		return Point{x, y}.ReducedPrecision(precision, tolerance), nil
 	}
-
 	return pt, errors.New("no intersection found")
 }
 
@@ -117,24 +136,24 @@ func (ls LineSegment) StringFixed(precision uint) LineSegmentString {
 	return LineSegmentString(fmt.Sprintf("(%v,%v)", ls.P1.StringFixed(precision), ls.P2.StringFixed(precision)))
 }
 
-func (ls LineSegment) L2() float64 {
-	a := math.Pow((ls.P1.X - ls.P2.X), 2)
-	b := math.Pow((ls.P1.Y - ls.P2.Y), 2)
-	return math.Pow(a+b, 0.5)
+func (ls LineSegment) L2(precision uint) dec.Decimal {
+	a := ls.P1.X.Sub(ls.P2.X).Pow(TWO)
+	b := ls.P1.Y.Sub(ls.P2.Y).Pow(TWO)
+	return Sqrt(a.Add(b), precision)
 }
 
 func (ls LineSegment) Mid() Point {
-	x := (ls.P1.X + ls.P2.X) / 2
-	y := (ls.P1.Y + ls.P2.Y) / 2
+	x := ls.P1.X.Add(ls.P2.X).Div(TWO)
+	y := ls.P1.Y.Add(ls.P2.Y).Div(TWO)
 	return Point{x, y}
 }
 
-func (ls *LineSegment) Direction() bool {
+func (ls *LineSegment) Direction(precision uint) bool {
 	// Provides the direction of the edge in the graph, by comparing the L2 distances
 	// (p1-to-end, p2-to-end).
-	p1ToEnd := LineSegment{ls.P1, END}.L2()
-	p2ToEnd := LineSegment{ls.P2, END}.L2()
-	direction := p1ToEnd > p2ToEnd
+	p1ToEnd := LineSegment{ls.P1, END}.L2(precision)
+	p2ToEnd := LineSegment{ls.P2, END}.L2(precision)
+	direction := p1ToEnd.GreaterThan(p2ToEnd)
 	return direction
 }
 
@@ -157,12 +176,12 @@ func (a ByXY) Swap(i, j int) {
 }
 
 func (a ByXY) Less(i, j int) bool {
-	if a[i].X < a[j].X {
+	if a[i].X.LessThan(a[j].X) {
 		return true
-	} else if a[i].X > a[j].X {
+	} else if a[i].X.GreaterThan(a[j].X) {
 		return false
 	} else {
-		return a[i].Y < a[j].Y
+		return a[i].Y.LessThan(a[j].Y)
 	}
 }
 
@@ -199,14 +218,6 @@ func (a AdjacencyList) String() string {
 	return strings.Join(results, "\n")
 }
 
-func almostEqual(a, b, tolerance float64) bool {
-	return math.Abs(a-b) < tolerance
-}
-
-func isInBetween(left, x, right float64) bool {
-	return left <= x && x <= right
-}
-
 type LineSegmentSlice []LineSegment
 
 func (lsSlice LineSegmentSlice) String() string {
@@ -219,25 +230,25 @@ func (lsSlice LineSegmentSlice) String() string {
 }
 
 type PolygonSolver struct {
-	N         int
+	N         uint
 	Precision uint
-	Tolerance float64
+	Tolerance dec.Decimal
 }
 
-func (ps PolygonSolver) FindNextCoordinate(i int, pt Point, theta float64) Point {
+func (ps PolygonSolver) FindNextCoordinate(i uint, pt Point, theta dec.Decimal) Point {
 	// Returns the next clockwise point from an existing polygon point
-	product := theta * float64(i)
-	x := (pt.X * (math.Cos(product))) - (pt.Y * (math.Sin(product)))
-	y := (pt.X * (math.Sin(product))) + (pt.Y * (math.Cos(product)))
+	product := theta.Mul(dec.NewFromInt(int64(i)))
+	x := pt.X.Mul(product.Cos()).Sub(pt.Y.Mul(product.Sin()))
+	y := pt.X.Mul(product.Sin()).Add(pt.Y.Mul(product.Cos()))
 	return Point{x, y}
 }
 
 func (ps PolygonSolver) CreatePolygonVertices() ByXY {
 	// Returns the vertices of a regular polygon
-	theta := 2 / float64(ps.N) * math.Pi
+	theta := TWO.Div(dec.NewFromInt(int64(ps.N))).Mul(dec.NewFromFloat(math.Pi))
 	polygon := make(ByXY, 0)
 
-	for i := 0; i < ps.N; i++ {
+	for i := uint(0); i < ps.N; i++ {
 		point := ps.FindNextCoordinate(i, START, theta)
 		polygon = append(polygon, point)
 	}
@@ -246,7 +257,7 @@ func (ps PolygonSolver) CreatePolygonVertices() ByXY {
 
 func (ps PolygonSolver) DrawLineSegments(vertices ByXY) []LineSegment {
 	// Returns the list of all basic (unbroken) line segments between all pairs of polygon vertices
-	c := combin.Combinations(ps.N, 2)
+	c := combin.Combinations(int(ps.N), 2)
 	lineSegments := make([]LineSegment, len(c))
 	for i, v := range c {
 		start, end := vertices[v[0]], vertices[v[1]]
@@ -321,7 +332,7 @@ func (ps PolygonSolver) CreateGraph(lineToPoints LineToPoints) (int, AdjacencyLi
 			// Standardise first and second
 			first := current.StringFixed(ps.Precision)
 			second := previous.StringFixed(ps.Precision)
-			if edge.Direction() {
+			if edge.Direction(ps.Precision) {
 				first, second = second, first
 			}
 
@@ -361,7 +372,7 @@ func p(x, y int) int {
 func (ps PolygonSolver) GetTheoreticalNodes() int {
 	// Returns the theoretical number of nodes in regular n-gon with all diagonals drawn
 	// Reference: https://oeis.org/A007569
-	n := ps.N
+	n := int(ps.N)
 
 	// tN denotes the term with divisible check in N
 	t2 := (-5*p(n, 3) + 45*p(n, 2) - 70*n + 24) / 24 * d(n, 2)
@@ -393,7 +404,7 @@ func (ps PolygonSolver) CheckNodes(a AdjacencyList) error {
 func (ps PolygonSolver) GetTheoreticalRegions() int {
 	// Returns the theoretical number of regions in regular n-gon with all diagonals drawn.
 	// Reference: https://oeis.org/A007678
-	n := ps.N
+	n := int(ps.N)
 
 	// tN denotes the term with divisible check in N
 	t0 := (p(n, 4) - 6*p(n, 3) + 23*p(n, 2) - 42*n + 24) / 24
@@ -591,7 +602,7 @@ func (ps PolygonSolver) SaveResult(result big.Int, filename string) {
 
 	byteValue, _ := io.ReadAll(jsonFile)
 
-	parsedItem := make(map[int]string)
+	parsedItem := make(map[uint]string)
 	json.Unmarshal([]byte(byteValue), &parsedItem)
 
 	// Check that the entry is the same
@@ -635,7 +646,7 @@ func (ps PolygonSolver) SaveAdjacencyListKeys(a AdjacencyList, filename string) 
 	os.WriteFile(filename, jsonStr, 0644)
 }
 
-func Run(p uint, t float64, n int) (big.Int, error) {
+func Run(p uint, t dec.Decimal, n uint) (big.Int, error) {
 	ps := PolygonSolver{n, p, t}
 	polygonVertices := ps.CreatePolygonVertices()
 	lineSegments := ps.DrawLineSegments(polygonVertices)
@@ -653,7 +664,7 @@ func Run(p uint, t float64, n int) (big.Int, error) {
 	return result, nil
 }
 
-func RunSimple(p uint, t float64, n int) (big.Int, error) {
+func RunSimple(p uint, t dec.Decimal, n uint) (big.Int, error) {
 	// Creating the simplified graph runs additional checks to ensure that:
 	// 1. The total number of nodes are correct
 	// 2. The total number of edges are correct
@@ -676,10 +687,10 @@ func RunSimple(p uint, t float64, n int) (big.Int, error) {
 	return result, nil
 }
 
-func GridSearch(n int) {
+func GridSearch(n uint) {
 	// Find a combination of p and t that works for a given value of n
 	for p := uint(9); p < 20; p++ {
-		t := math.Pow10(-int(p))
+		t := dec.New(1, -int32(p))
 		result, err := Run(p, t, n)
 		if err != nil || result.Cmp(big.NewInt(0)) == 0 {
 			continue
@@ -692,9 +703,11 @@ func GridSearch(n int) {
 }
 
 func main() {
-	p, t := uint(10), math.Pow10(-10)
-	for i := 4; i < 60; i += 2 {
-		result, err := Run(p, t, i)
+	p := uint(10)
+	t := dec.New(1, -int32(p))
+
+	for i := uint(4); i < 60; i += 2 {
+		result, err := RunSimple(p, t, i)
 		if err != nil || result.Cmp(big.NewInt(0)) == 0 {
 			panic(err)
 		}
