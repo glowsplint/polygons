@@ -26,9 +26,8 @@ The pub-sub model can allow for symmetry to be handled inside the primary gorout
 1. We can discard the values of earlier nodes once they are no longer required
 2. Function-level optimisation to ensure we allocate on the stack instead of the heap.
 3. Using goroutines to speed up processing by saturating available cores
-4. Using bottom-up dynamic programming and avoiding the recursion limit
-5. Using symmetry to reduce duplicate calculations
-6. Reduce type conversions
+4. Using symmetry to reduce duplicate calculations
+5. Reduce type conversions
 
 # Using float64 vs Decimal struct
 

@@ -75,6 +75,10 @@ class Point:
     ) -> Optional["Point"]:
         """
         Constructor for Point instances via intersection of two LineSegments.
+
+        Reference:
+            https://stackoverflow.com/a/20679579, and
+            https://observablehq.com/@toja/line-box-intersection
         """
         a1, b1, c1 = (
             (line_a.p2.x - line_a.p1.x),
@@ -663,7 +667,7 @@ class PolygonSolver:
 @fn_timer
 def main(n: int) -> PolygonSolver:
     polygon_solver = PolygonSolver(
-        n=n, plot=True, figsize=20, show_values=False, show_order=True
+        n=n, plot=True, figsize=20, show_values=True, show_order=False
     )
     result = polygon_solver.result()
     polygon_solver.save_result(result, "results.json")
