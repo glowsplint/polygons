@@ -30,7 +30,7 @@ func Sqrt(d dec.Decimal, precision uint) dec.Decimal {
 		guess = ONE
 	}
 	result := guess
-	for i := uint(0); i < precision; i++ {
+	for i := uint(1); i < precision*3; i *= 2 {
 		num := result.Mul(result).Sub(d)
 		denom := TWO.Mul(result)
 		result = result.Sub(num.Div(denom))
@@ -602,20 +602,20 @@ func (ps PolygonSolver) SaveResult(result big.Int, filename string) {
 
 	byteValue, _ := io.ReadAll(jsonFile)
 
-	parsedItem := make(map[uint]string)
+	parsedItem := make(map[uint]json.Number)
 	json.Unmarshal([]byte(byteValue), &parsedItem)
 
 	// Check that the entry is the same
 	extracted_result, ok := parsedItem[ps.N]
 
 	if ok {
-		if extracted_result != result.String() {
+		if string(extracted_result) != result.String() {
 			err = fmt.Errorf("the calculated value for n=%v does not equal the existing value", ps.N)
 			panic(err)
 		}
 		fmt.Println("Calculated result matches existing result.")
 	} else {
-		parsedItem[ps.N] = result.String()
+		parsedItem[ps.N] = json.Number(result.String())
 		jsonStr, err := json.MarshalIndent(parsedItem, "", "")
 		if err != nil {
 			panic(err)
@@ -706,8 +706,8 @@ func main() {
 	p := uint(10)
 	t := dec.New(1, -int32(p))
 
-	for i := uint(4); i < 60; i += 2 {
-		result, err := RunSimple(p, t, i)
+	for i := uint(46); i < 60; i += 2 {
+		result, err := Run(p, t, i)
 		if err != nil || result.Cmp(big.NewInt(0)) == 0 {
 			panic(err)
 		}
