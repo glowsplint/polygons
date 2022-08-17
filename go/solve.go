@@ -64,11 +64,11 @@ func (p Point) String() string {
 	return fmt.Sprintf("(%v,%v)", p.X, p.Y)
 }
 
-func (p Point) StringFixed(places uint) PointString {
+func (p Point) StringFixed(places uint) string {
 	intPlaces := int32(places)
 	sX := p.X.StringFixed(intPlaces)
 	sY := p.Y.StringFixed(intPlaces)
-	return PointString(fmt.Sprintf("(%v,%v)", sX, sY))
+	return fmt.Sprintf("(%v,%v)", sX, sY)
 }
 
 func (p Point) ReducedPrecision(precision uint, tolerance dec.Decimal) Point {
@@ -81,7 +81,7 @@ func NewFromPointString(s string) (Point, error) {
 	// Use regex to capture the first part and second part
 	var pt Point
 	reX := regexp.MustCompile(`\((.*),`)
-	reY := regexp.MustCompile(`,(.*)\)`)
+	reY := regexp.MustCompile(`,\s*(.*)\)`)
 	x, err := dec.NewFromString(reX.FindStringSubmatch(s)[1])
 	if err != nil {
 		return pt, err
@@ -278,8 +278,10 @@ func (ps PolygonSolver) MapLineSegmentsToPoints(lineSegments []LineSegment) Line
 		result[lineStr] = make(map[PointString]Point)
 		line.P1 = line.P1.ReducedPrecision(ps.Precision, ps.Tolerance)
 		line.P2 = line.P2.ReducedPrecision(ps.Precision, ps.Tolerance)
-		result[lineStr][line.P1.StringFixed(ps.Precision)] = line.P1
-		result[lineStr][line.P2.StringFixed(ps.Precision)] = line.P2
+		p1str := PointString(line.P1.StringFixed(ps.Precision))
+		p2str := PointString(line.P2.StringFixed(ps.Precision))
+		result[lineStr][p1str] = line.P1
+		result[lineStr][p2str] = line.P2
 	}
 
 	// Intersect every pair of line segments
@@ -290,7 +292,7 @@ func (ps PolygonSolver) MapLineSegmentsToPoints(lineSegments []LineSegment) Line
 
 		// Line segments may not intersect
 		if err == nil {
-			pointStr := point.StringFixed(ps.Precision)
+			pointStr := PointString(point.StringFixed(ps.Precision))
 			result[first.StringFixed(ps.Precision)][pointStr] = point
 			result[second.StringFixed(ps.Precision)][pointStr] = point
 		}
@@ -330,8 +332,8 @@ func (ps PolygonSolver) CreateGraph(lineToPoints LineToPoints) (int, AdjacencyLi
 			edge := LineSegment{previous, current}
 
 			// Standardise first and second
-			first := current.StringFixed(ps.Precision)
-			second := previous.StringFixed(ps.Precision)
+			first := PointString(current.StringFixed(ps.Precision))
+			second := PointString(previous.StringFixed(ps.Precision))
 			if edge.Direction(ps.Precision) {
 				first, second = second, first
 			}
@@ -526,7 +528,8 @@ func (ps PolygonSolver) GetTopologicalOrdering(a AdjacencyList, i Indegrees) []P
 		indegreesCopy[k] = v
 	}
 
-	queue.PushBack(START.StringFixed(ps.Precision))
+	pointStr := PointString(START.StringFixed(ps.Precision))
+	queue.PushBack(pointStr)
 	order := make([]PointString, 0)
 
 	for queue.Len() > 0 {
@@ -553,7 +556,8 @@ func (ps PolygonSolver) Solve(a AdjacencyList, i Indegrees, order []PointString)
 
 	// Initialise the bottom-up dynamic programming map
 	dp := make(map[PointString]big.Int)
-	dp[START.StringFixed(ps.Precision)] = *big.NewInt(1)
+	pointStr := PointString(START.StringFixed(ps.Precision))
+	dp[pointStr] = *big.NewInt(1)
 
 	fmt.Println("Summing over the graph...")
 	for _, node := range order {
@@ -584,7 +588,8 @@ func (ps PolygonSolver) SolveSimple(s SimpleAdjacencyList) []big.Int {
 }
 
 func (ps PolygonSolver) Result(dp map[PointString]big.Int) big.Int {
-	return dp[END.StringFixed(ps.Precision)]
+	pointStr := PointString(END.StringFixed(ps.Precision))
+	return dp[pointStr]
 }
 
 func (ps PolygonSolver) ResultSimple(dp []big.Int) big.Int {

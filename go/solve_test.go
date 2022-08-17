@@ -1,10 +1,6 @@
 package main
 
 import (
-	"encoding/json"
-	"fmt"
-	"io/ioutil"
-	"os"
 
 	// "reflect"
 	"testing"
@@ -12,107 +8,11 @@ import (
 	dec "github.com/shopspring/decimal"
 )
 
-var precision uint = 30
+var precision uint = 15
 var tolerance dec.Decimal = dec.New(1, -int32(precision))
-
-type BasePolygonCase struct {
-	Name            string        `json:"name"`
-	N               int           `json:"n"`
-	PolygonVertices [][]float64   `json:"polygonVertices"`
-	LineSegments    [][][]float64 `json:"lineSegments"`
-	LineToPoints    []struct {
-		LineSegment [][]float64 `json:"lineSegment"`
-		Points      [][]float64 `json:"points"`
-	} `json:"lineToPoints"`
-	TotalPoints int `json:"totalPoints"`
-}
-
-type PolygonTestCase struct {
-	Name            string
-	N               uint
-	PolygonVertices ByXY
-	LineSegments    []LineSegment
-	LineToPoints    LineToPoints
-	TotalPoints     int
-}
 
 type FixedStringer interface {
 	StringFixed(precision uint) string
-}
-
-var polygonTestCases = GetTestCases()
-
-func NewFromBaseCase(bpc BasePolygonCase) PolygonTestCase {
-	// Creates a PolygonTestCase from a JSON-marshalled BasePolygonCase struct
-	var polygonTestCase PolygonTestCase
-	var pv ByXY
-	var ls []LineSegment
-	ltp := make(LineToPoints)
-
-	// Attach constants
-	polygonTestCase.N = uint(bpc.N)
-	polygonTestCase.Name = bpc.Name
-
-	// Create and attach polygon vertices
-	for _, v := range bpc.PolygonVertices {
-		pv = append(pv, Point{dec.NewFromFloat(v[0]), dec.NewFromFloat(v[1])})
-	}
-	polygonTestCase.PolygonVertices = pv
-
-	// Create and attach line segments
-	for _, v := range bpc.LineSegments {
-		ls = append(ls, LineSegment{
-			Point{dec.NewFromFloat(v[0][0]), dec.NewFromFloat(v[0][1])},
-			Point{dec.NewFromFloat(v[1][0]), dec.NewFromFloat(v[1][1])},
-		})
-	}
-	polygonTestCase.LineSegments = ls
-
-	// Create and attach line to points map
-	for _, v := range bpc.LineToPoints {
-		ls := LineSegment{
-			Point{dec.NewFromFloat(v.LineSegment[0][0]), dec.NewFromFloat(v.LineSegment[0][1])},
-			Point{dec.NewFromFloat(v.LineSegment[1][0]), dec.NewFromFloat(v.LineSegment[1][1])},
-		}
-		ltp[ls.StringFixed(precision)] = make(map[PointString]Point)
-		for _, p := range v.Points {
-			point := Point{dec.NewFromFloat(p[0]), dec.NewFromFloat(p[1])}
-			ltp[ls.StringFixed(precision)][point.StringFixed(precision)] = point
-		}
-	}
-
-	polygonTestCase.LineToPoints = ltp
-	return polygonTestCase
-}
-
-func NewFromBaseCases(a []BasePolygonCase) []PolygonTestCase {
-	// Creates a slice of PolygonTestCases from a slice of JSON-marshalled BasePolygonCase structs
-	var results []PolygonTestCase
-	for _, v := range a {
-		results = append(results, NewFromBaseCase(v))
-	}
-	return results
-}
-
-func GetTestCases() []PolygonTestCase {
-	// Returns test cases from test_cases.json
-	var basePolygonCases []BasePolygonCase
-
-	// Read test_cases.json
-	jsonFile, err := os.Open("test_cases.json")
-
-	if err != nil {
-		fmt.Println(err)
-	}
-	defer jsonFile.Close()
-
-	// Create byte array
-	byteValue, _ := ioutil.ReadAll(jsonFile)
-	json.Unmarshal(byteValue, &basePolygonCases)
-
-	// Create test cases from base cases
-	polygonTestCases := NewFromBaseCases(basePolygonCases)
-	return polygonTestCases
 }
 
 func AreTwoFixedStringerSlicesEqual(a, b []FixedStringer, t *testing.T) bool {
@@ -122,10 +22,10 @@ func AreTwoFixedStringerSlicesEqual(a, b []FixedStringer, t *testing.T) bool {
 
 	tA, tB := make(map[string]FixedStringer), make(map[string]FixedStringer)
 	for _, p := range a {
-		tA[string(p.StringFixed(precision))] = p
+		tA[p.StringFixed(precision)] = p
 	}
 	for _, p := range b {
-		tB[string(p.StringFixed(precision))] = p
+		tB[p.StringFixed(precision)] = p
 	}
 
 	// Check maps are equal by:
@@ -158,21 +58,60 @@ func AreTwoFixedStringerSlicesEqual(a, b []FixedStringer, t *testing.T) bool {
 	return true
 }
 
-// func TestCreatePolygonVertices(t *testing.T) {
-// 	// Create a new polygon solver struct for every test case
-// 	for _, testCase := range polygonTestCases {
-// 		ps := PolygonSolver{testCase.N, precision, tolerance}
+func TestNewFromPointString(t *testing.T) {
+	testCases := []struct {
+		input string
+		want  Point
+	}{
+		{"(1.0, 0.0)", Point{dec.NewFromFloat(1.0), dec.NewFromFloat(0.0)}},
+		{"(0.0, 1.0)", Point{dec.NewFromFloat(0.0), dec.NewFromFloat(1.0)}},
+		{"(-1.0, 0.0)", Point{dec.NewFromFloat(-1.0), dec.NewFromFloat(0.0)}},
+		{"(0.0, -1.0)", Point{dec.NewFromFloat(0.0), dec.NewFromFloat(-1.0)}},
+	}
+	for _, testCase := range testCases {
+		got, err := NewFromPointString(testCase.input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Points are not directly comparable as the struct definition contains pointers
+		// We compare their string equivalents instead
+		if got.String() != testCase.want.String() {
+			t.Errorf("got = %v, want = %v", got, testCase.want)
+		}
+	}
+}
 
-// 		got, want := make([]FixedStringer, 0), make([]FixedStringer, 0)
-// 		for _, v := range ps.CreatePolygonVertices() {
-// 			got = append(got, v)
-// 		}
-// 		for _, v := range testCase.PolygonVertices {
-// 			want = append(want, string(v))
-// 		}
-// 		AreTwoFixedStringerSlicesEqual(got, want, t)
-// 	}
-// }
+func TestCreatePolygonVertices(t *testing.T) {
+	// Create a new polygon solver struct for every test case
+	testCases := []struct {
+		N        uint
+		Vertices []string
+	}{
+		{4, []string{
+			"(1.0, 0.0)",
+			"(0.0, 1.0)",
+			"(-1.0, 0.0)",
+			"(0.0, -1.0)",
+		}},
+	}
+
+	for _, testCase := range testCases {
+		ps := PolygonSolver{testCase.N, precision, tolerance}
+
+		got, want := make([]FixedStringer, 0), make([]FixedStringer, 0)
+		for _, v := range ps.CreatePolygonVertices() {
+			got = append(got, v)
+		}
+		for _, v := range testCase.Vertices {
+			point, err := NewFromPointString(v)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want = append(want, point)
+		}
+		AreTwoFixedStringerSlicesEqual(got, want, t)
+	}
+}
 
 func benchmarkCreatePolygonVertices(i int, b *testing.B) {
 	for n := 0; n < b.N; n++ {
@@ -187,9 +126,6 @@ func BenchmarkCreatePolygonVertices4(b *testing.B) {
 
 func BenchmarkCreatePolygonVertices15(b *testing.B) {
 	benchmarkCreatePolygonVertices(15, b)
-}
-func BenchmarkCreatePolygonVertices60(b *testing.B) {
-	benchmarkCreatePolygonVertices(60, b)
 }
 
 // func TestCreatePolygonVerticesConcurrently(t *testing.T) {
