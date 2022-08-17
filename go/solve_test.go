@@ -15,7 +15,22 @@ type FixedStringer interface {
 	StringFixed(precision uint) string
 }
 
-func AreTwoFixedStringerSlicesEqual(a, b []FixedStringer, t *testing.T) bool {
+func benchmarkCreatePolygonVertices(i int, b *testing.B) {
+	for n := 0; n < b.N; n++ {
+		ps := PolygonSolver{uint(i), precision, tolerance}
+		ps.CreateExteriorVertices()
+	}
+}
+
+func BenchmarkCreatePolygonVertices4(b *testing.B) {
+	benchmarkCreatePolygonVertices(4, b)
+}
+
+func BenchmarkCreatePolygonVertices15(b *testing.B) {
+	benchmarkCreatePolygonVertices(15, b)
+}
+
+func areTwoFixedStringerSlicesEqual(a, b []FixedStringer, t *testing.T) bool {
 	// Two []Point are considered to be equal if they contain the same Points
 	// Create map with truncated strings as keys and Decimal struct as values for got
 	t.Helper()
@@ -38,6 +53,7 @@ func AreTwoFixedStringerSlicesEqual(a, b []FixedStringer, t *testing.T) bool {
 			t.Errorf("s = %v in wanted but not found in got", s)
 		}
 	}
+
 	// 2. Checking all keys in tB are found in tA
 	for _, p := range a {
 		s := p.StringFixed(precision)
@@ -81,11 +97,10 @@ func TestNewFromPointString(t *testing.T) {
 	}
 }
 
-func TestCreatePolygonVertices(t *testing.T) {
-	// Create a new polygon solver struct for every test case
+func TestCreateExteriorVertices(t *testing.T) {
 	testCases := []struct {
-		N        uint
-		Vertices []string
+		n        uint
+		vertices []string
 	}{
 		{4, []string{
 			"(1.0, 0.0)",
@@ -96,36 +111,21 @@ func TestCreatePolygonVertices(t *testing.T) {
 	}
 
 	for _, testCase := range testCases {
-		ps := PolygonSolver{testCase.N, precision, tolerance}
+		ps := PolygonSolver{testCase.n, precision, tolerance}
 
 		got, want := make([]FixedStringer, 0), make([]FixedStringer, 0)
-		for _, v := range ps.CreatePolygonVertices() {
+		for _, v := range ps.CreateExteriorVertices() {
 			got = append(got, v)
 		}
-		for _, v := range testCase.Vertices {
+		for _, v := range testCase.vertices {
 			point, err := NewFromPointString(v)
 			if err != nil {
 				t.Fatal(err)
 			}
 			want = append(want, point)
 		}
-		AreTwoFixedStringerSlicesEqual(got, want, t)
+		areTwoFixedStringerSlicesEqual(got, want, t)
 	}
-}
-
-func benchmarkCreatePolygonVertices(i int, b *testing.B) {
-	for n := 0; n < b.N; n++ {
-		ps := PolygonSolver{uint(i), precision, tolerance}
-		ps.CreatePolygonVertices()
-	}
-}
-
-func BenchmarkCreatePolygonVertices4(b *testing.B) {
-	benchmarkCreatePolygonVertices(4, b)
-}
-
-func BenchmarkCreatePolygonVertices15(b *testing.B) {
-	benchmarkCreatePolygonVertices(15, b)
 }
 
 // func TestCreatePolygonVerticesConcurrently(t *testing.T) {
@@ -144,21 +144,67 @@ func BenchmarkCreatePolygonVertices15(b *testing.B) {
 // 	}
 // }
 
-// func TestDrawLineSegments(t *testing.T) {
-// 	for _, testCase := range polygonTestCases {
-// 		ps := PolygonSolver{testCase.N, precision, tolerance}
-// 		pv := testCase.PolygonVertices
+func TestDrawLineSegments(t *testing.T) {
+	testCases := []struct {
+		n            uint
+		vertices     []string
+		lineSegments [][]string
+	}{
+		{4,
+			[]string{
+				"(1.0, 0.0)",
+				"(0.0, 1.0)",
+				"(-1.0, 0.0)",
+				"(0.0, -1.0)",
+			},
+			[][]string{
+				{"(1.0, 0.0)", "(0.0, 1.0)"},
+				{"(1.0, 0.0)", "(-1.0, 0.0)"},
+				{"(1.0, 0.0)", "(0.0, -1.0)"},
+				{"(0.0, 1.0)", "(-1.0, 0.0)"},
+				{"(0.0, 1.0)", "(0.0, -1.0)"},
+				{"(-1.0, 0.0)", "(0.0, -1.0)"},
+			}},
+	}
 
-// 		got, want := make([]FixedStringer, 0), make([]FixedStringer, 0)
-// 		for _, v := range ps.DrawLineSegments(pv) {
-// 			got = append(got, v)
-// 		}
-// 		for _, v := range testCase.LineSegments {
-// 			want = append(want, v)
-// 		}
-// 		AreTwoFixedStringerSlicesEqual(got, want, t)
-// 	}
-// }
+	for _, testCase := range testCases {
+		ps := PolygonSolver{testCase.n, precision, tolerance}
+
+		// Create vertices from strings
+		var pv ByXY
+		for _, v := range testCase.vertices {
+			pointStr, err := NewFromPointString(v)
+			if err != nil {
+				t.Fatal(err)
+			}
+			pv = append(pv, pointStr)
+		}
+
+		// Create line segments from strings
+		var ls []LineSegment
+		for _, v := range testCase.lineSegments {
+			p1, err := NewFromPointString(v[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			p2, err := NewFromPointString(v[1])
+			if err != nil {
+				t.Fatal(err)
+			}
+			lineSegment := LineSegment{p1, p2}
+			ls = append(ls, lineSegment)
+		}
+
+		got, want := make([]FixedStringer, 0), make([]FixedStringer, 0)
+		for _, v := range ps.DrawLineSegments(pv) {
+			got = append(got, v)
+		}
+		for _, v := range ls {
+			want = append(want, v)
+		}
+		areTwoFixedStringerSlicesEqual(got, want, t)
+	}
+}
 
 // func TestMapLineToPoints4(t *testing.T) {
 // 	for _, testCase := range polygonTestCases {

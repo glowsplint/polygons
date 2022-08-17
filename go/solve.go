@@ -132,8 +132,8 @@ func (ls LineSegment) String() string {
 	return fmt.Sprintf("(%v,%v)", ls.P1.String(), ls.P2.String())
 }
 
-func (ls LineSegment) StringFixed(precision uint) LineSegmentString {
-	return LineSegmentString(fmt.Sprintf("(%v,%v)", ls.P1.StringFixed(precision), ls.P2.StringFixed(precision)))
+func (ls LineSegment) StringFixed(precision uint) string {
+	return fmt.Sprintf("(%v,%v)", ls.P1.StringFixed(precision), ls.P2.StringFixed(precision))
 }
 
 func (ls LineSegment) L2(precision uint) dec.Decimal {
@@ -243,7 +243,7 @@ func (ps PolygonSolver) FindNextCoordinate(i uint, pt Point, theta dec.Decimal) 
 	return Point{x, y}
 }
 
-func (ps PolygonSolver) CreatePolygonVertices() ByXY {
+func (ps PolygonSolver) CreateExteriorVertices() ByXY {
 	// Returns the vertices of a regular polygon
 	theta := TWO.Div(dec.NewFromInt(int64(ps.N))).Mul(dec.NewFromFloat(math.Pi))
 	polygon := make(ByXY, 0)
@@ -274,7 +274,7 @@ func (ps PolygonSolver) MapLineSegmentsToPoints(lineSegments []LineSegment) Line
 
 	// Add both known polygon points onto the line
 	for _, line := range lineSegments {
-		lineStr := line.StringFixed(ps.Precision)
+		lineStr := LineSegmentString(line.StringFixed(ps.Precision))
 		result[lineStr] = make(map[PointString]Point)
 		line.P1 = line.P1.ReducedPrecision(ps.Precision, ps.Tolerance)
 		line.P2 = line.P2.ReducedPrecision(ps.Precision, ps.Tolerance)
@@ -293,8 +293,10 @@ func (ps PolygonSolver) MapLineSegmentsToPoints(lineSegments []LineSegment) Line
 		// Line segments may not intersect
 		if err == nil {
 			pointStr := PointString(point.StringFixed(ps.Precision))
-			result[first.StringFixed(ps.Precision)][pointStr] = point
-			result[second.StringFixed(ps.Precision)][pointStr] = point
+			firstLStr := LineSegmentString(first.StringFixed(ps.Precision))
+			secondLStr := LineSegmentString(second.StringFixed(ps.Precision))
+			result[firstLStr][pointStr] = point
+			result[secondLStr][pointStr] = point
 		}
 	}
 	return result
@@ -653,8 +655,8 @@ func (ps PolygonSolver) SaveAdjacencyListKeys(a AdjacencyList, filename string) 
 
 func Run(p uint, t dec.Decimal, n uint) (big.Int, error) {
 	ps := PolygonSolver{n, p, t}
-	polygonVertices := ps.CreatePolygonVertices()
-	lineSegments := ps.DrawLineSegments(polygonVertices)
+	exteriorVertices := ps.CreateExteriorVertices()
+	lineSegments := ps.DrawLineSegments(exteriorVertices)
 	lineToPoints := ps.MapLineSegmentsToPoints(lineSegments)
 	nEdges, adjacencyList, indegrees := ps.CreateGraph(lineToPoints)
 	order := ps.GetTopologicalOrdering(adjacencyList, indegrees)
@@ -675,8 +677,8 @@ func RunSimple(p uint, t dec.Decimal, n uint) (big.Int, error) {
 	// 2. The total number of edges are correct
 	// 3. The downstream nodes all exist within the simplified graph
 	ps := PolygonSolver{n, p, t}
-	polygonVertices := ps.CreatePolygonVertices()
-	lineSegments := ps.DrawLineSegments(polygonVertices)
+	exteriorVertices := ps.CreateExteriorVertices()
+	lineSegments := ps.DrawLineSegments(exteriorVertices)
 	lineToPoints := ps.MapLineSegmentsToPoints(lineSegments)
 	_, adjacencyList, indegrees := ps.CreateGraph(lineToPoints)
 	order := ps.GetTopologicalOrdering(adjacencyList, indegrees)
