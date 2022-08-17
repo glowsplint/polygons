@@ -93,8 +93,27 @@ func NewFromPointString(s string) (Point, error) {
 	return Point{x, y}, nil
 }
 
+func NewFromLineSegmentString(s string) (LineSegment, error) {
+	var ls LineSegment
+	reP1 := regexp.MustCompile(`(\(.*\)),`)
+	reP2 := regexp.MustCompile(`,\s*(\((.*)\))`)
+	p1, err := NewFromPointString(reP1.FindStringSubmatch(s)[1])
+	if err != nil {
+		return ls, err
+	}
+	p2, err := NewFromPointString(reP2.FindStringSubmatch(s)[1])
+	if err != nil {
+		return ls, err
+	}
+	return LineSegment{p1, p2}, nil
+}
+
 func NewFromIntersection(L1, L2 LineSegment, precision uint, tolerance dec.Decimal) (Point, error) {
-	// Constructor for Point via the intersection of two line segments
+	// Constructor for Point via the intersection of two line segments using Cramer's rule
+	// Reference:
+	// 		https://stackoverflow.com/a/20679579, and
+	// 		https://observablehq.com/@toja/line-box-intersection
+
 	a1 := L1.P2.X.Sub(L1.P1.X)
 	b1 := L2.P1.X.Sub(L2.P2.X)
 	c1 := L2.P1.X.Sub(L1.P1.X)
@@ -107,17 +126,21 @@ func NewFromIntersection(L1, L2 LineSegment, precision uint, tolerance dec.Decim
 	dY := a1.Mul(c2).Sub(c1.Mul(a2))
 
 	var pt Point
+	if almostEqual(d, ZERO, tolerance) {
+		return pt, errors.New("points are parallel or coincident")
+	}
 	s := dX.Div(d)
 	t := dY.Div(d)
 
-	if !almostEqual(d, ZERO, tolerance) && (isInBetween(ZERO, s, ONE) && isInBetween(ZERO, t, ONE)) {
-		x := (ONE.Sub(s)).Mul(L1.P1.X).Add(s.Mul(L1.P2.X))
-		y := (ONE.Sub(s)).Mul(L1.P1.Y).Add(s.Mul(L1.P2.Y))
-		x = zeroise(x, tolerance)
-		y = zeroise(y, tolerance)
-		return Point{x, y}.ReducedPrecision(precision, tolerance), nil
+	if !(isInBetween(ZERO, s, ONE) && isInBetween(ZERO, t, ONE)) {
+		return pt, errors.New("no intersection found")
 	}
-	return pt, errors.New("no intersection found")
+
+	x := (ONE.Sub(s)).Mul(L1.P1.X).Add(s.Mul(L1.P2.X))
+	y := (ONE.Sub(s)).Mul(L1.P1.Y).Add(s.Mul(L1.P2.Y))
+	x = zeroise(x, tolerance)
+	y = zeroise(y, tolerance)
+	return Point{x, y}.ReducedPrecision(precision, tolerance), nil
 }
 
 // LineSegment definition

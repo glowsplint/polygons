@@ -89,9 +89,10 @@ func TestNewFromPointString(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		want := testCase.want
 		// Points are not directly comparable as the struct definition contains pointers
 		// We compare their string equivalents instead
-		if got.String() != testCase.want.String() {
+		if got.String() != want.String() {
 			t.Errorf("got = %v, want = %v", got, testCase.want)
 		}
 	}
@@ -206,20 +207,105 @@ func TestDrawLineSegments(t *testing.T) {
 	}
 }
 
-// func TestMapLineToPoints4(t *testing.T) {
-// 	for _, testCase := range polygonTestCases {
-// 		ps := PolygonSolver{testCase.N, precision, tolerance}
-// 		lineSegments := testCase.LineSegments
-// 		got := ps.MapLineSegmentsToPoints(lineSegments)
-// 		want := testCase.LineToPoints
+func TestNewFromLineSegmentString(t *testing.T) {
+	testCases := []struct {
+		input string
+		want  LineSegment
+	}{
+		{"(1, 0), (0, 1)", LineSegment{
+			Point{dec.NewFromFloat(1), dec.NewFromFloat(0)},
+			Point{dec.NewFromFloat(0), dec.NewFromFloat(1)},
+		}},
+		{"(-1, 0), (0, -1)", LineSegment{
+			Point{dec.NewFromFloat(-1), dec.NewFromFloat(0)},
+			Point{dec.NewFromFloat(0), dec.NewFromFloat(-1)},
+		}},
+	}
+	for _, testCase := range testCases {
+		got, err := NewFromLineSegmentString(testCase.input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := testCase.want
+		if got.String() != want.String() {
+			t.Errorf("got = %v, want = %v", got, testCase.want)
+		}
+	}
+}
 
-// 		// TODO: Deep equal will not work because points contain Decimal which contains pointers
-// 		// Need to convert them into string and do string comparison
-// 		if !reflect.DeepEqual(got, want) && ps.N == 4 {
-// 			t.Errorf("got = %v, \nwant = %v", got, want)
-// 		}
-// 	}
-// }
+func TestMapLineSegmentsToPoints(t *testing.T) {
+	testCases := []struct {
+		n            uint
+		lineSegments [][]string
+		lineToPoints map[string][]string
+	}{
+		{4,
+			[][]string{
+				{"(1.0, 0.0)", "(0.0, 1.0)"},
+				{"(1.0, 0.0)", "(-1.0, 0.0)"},
+				{"(1.0, 0.0)", "(0.0, -1.0)"},
+				{"(0.0, 1.0)", "(-1.0, 0.0)"},
+				{"(0.0, 1.0)", "(0.0, -1.0)"},
+				{"(-1.0, 0.0)", "(0.0, -1.0)"},
+			},
+			map[string][]string{
+				"(1, 0), (0, 1)":   {"(0, 1)", "(1, 0)"},
+				"(1, 0), (-1, 0)":  {"(-1, 0)", "(0, 0)", "(1, 0)"},
+				"(1, 0), (0, -1)":  {"(0, -1)", "(1, 0)"},
+				"(0, 1), (-1, 0)":  {"(-1, 0)", "(0, 1)"},
+				"(0, 1), (0, -1)":  {"(0, -1)", "(0, 0)", "(0, 1)"},
+				"(-1, 0), (0, -1)": {"(-1, 0)", "(0, -1)"},
+			}},
+	}
+	for _, testCase := range testCases {
+		ps := PolygonSolver{testCase.n, precision, tolerance}
+		// Create line segments from strings
+		var ls []LineSegment
+		for _, v := range testCase.lineSegments {
+			p1, err := NewFromPointString(v[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			p2, err := NewFromPointString(v[1])
+			if err != nil {
+				t.Fatal(err)
+			}
+			lineSegment := LineSegment{p1, p2}
+			ls = append(ls, lineSegment)
+		}
+
+		// Create line to points mapping from strings
+		ltp := make(LineToPoints)
+		for k, v := range testCase.lineToPoints {
+			lineSegment, err := NewFromLineSegmentString(k)
+			if err != nil {
+				t.Fatal(err)
+			}
+			key := LineSegmentString(lineSegment.StringFixed(ps.Precision))
+			value := make(map[PointString]Point)
+			for _, s := range v {
+				value[PointString(s)], err = NewFromPointString(s)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			ltp[key] = value
+		}
+
+		got, want := make([]FixedStringer, 0), make([]FixedStringer, 0)
+		for _, v := range ps.MapLineSegmentsToPoints(ls) {
+			for _, point := range v {
+				got = append(got, point)
+			}
+		}
+		for _, v := range ltp {
+			for _, point := range v {
+				want = append(want, point)
+			}
+		}
+		areTwoFixedStringerSlicesEqual(got, want, t)
+	}
+}
 
 // func TestGetPointToChannelTotalPoints(t *testing.T) {
 // 	for i := 4; i < 60; i += 2 {
