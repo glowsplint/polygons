@@ -165,12 +165,6 @@ func (ls LineSegment) L2(precision uint) dec.Decimal {
 	return Sqrt(a.Add(b), precision)
 }
 
-func (ls LineSegment) Mid() Point {
-	x := ls.P1.X.Add(ls.P2.X).Div(TWO)
-	y := ls.P1.Y.Add(ls.P2.Y).Div(TWO)
-	return Point{x, y}
-}
-
 func (ls *LineSegment) Direction(precision uint) bool {
 	// Provides the direction of the edge in the graph, by comparing the L2 distances
 	// (p1-to-end, p2-to-end).
